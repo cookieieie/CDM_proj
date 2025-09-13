@@ -9,51 +9,144 @@ output: html_document
 library(GDINA)
 library(mirt)
 library(mvtnorm)
+library(dplyr)
 ```
 
 ```{r}
-set.seed(11)
+set.seed(101)
 
+structure <- c("Simple", "Complex")
 correlation <- c(0, 0.3, 0.6)
 num_dim <- c(3, 5)
 
-result_simple <- list()
+# for complex structure: function to align model specification to Q-matrix
+to_model_string <- function(Q){
+  factors <- lapply(seq_len(ncol(Q)), function(f){
+    items <- which(Q[, f] == 1)
+    paste0("F", f, " = ", paste(items, collapse = ","))
+  })
+  cov <- paste0("COV = ", paste0("F", 1:ncol(Q), collapse = "*"))
+  paste(c(factors, cov), collapse = "\n")
+}
 
-for (cor in correlation) {
-  for (nd in num_dim) {
+# for complex structure: Q-matrix with 3 dimensions
+Q_complex_3 <- matrix(c(
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,1,1, 1,1,1, 1,1,1,
+            1,1,1, 1,1,1, 1,1,1
+        ), ncol = 3, byrow = TRUE)
+
+results <- list()
+cond_num <- 1
+
+for (str in structure) {
+  for (cor in correlation) {
+    for (nd in num_dim) {
+      
+      # simulate theta
+      r <- matrix(cor, nd, nd)
+      diag(r) <- 1
+      theta <- rmvnorm(2000, sigma = r)
+      
+      # simulate discrimination/Q-matrix depending on structure
+      if (str == "Simple") {
+        a <- matrix(NA, nrow = 30, ncol = nd)
+        block_size <- 30 / nd
+        for (i in 1:nd) {
+          start_index <- (i - 1) * block_size + 1
+          end_index <- i * block_size
+          a[start_index:end_index, i] <- rlnorm(block_size, 0, 1)
+        }
+        
+        # align Q matrix to model for simple structure
+        factor_lines <- vapply(1:nd, function(i) { 
+          start_index <- (i - 1) * block_size + 1 
+          end_index <- i * block_size
+          paste0("F", i, " = ", paste(start_index:end_index, collapse = ",")) 
+          }, character(1)) 
+        cov_line <- paste0("COV = ", paste0("F", 1:nd, collapse = "*")) 
+        model_specification <- paste(c(factor_lines, cov_line), collapse = "\n")
+        
+        Q <- (!is.na(a)) * 1
+        
+      } else if (str == "Complex" & nd == 3) {
+        Q <- Q_complex_3
+        a <- matrix(NA, nrow = 30, ncol = 3)
+        a[Q == 1] <- rlnorm(sum(Q == 1), 0, 1)
+        model_specification <- to_model_string(Q)
+        
+      } else if (str == "Complex" & nd == 5) {
+        Q <- sim30GDINA$simQ
+        a <- matrix(NA, nrow = 30, ncol = 5)
+        a[Q == 1] <- rlnorm(sum(Q == 1), 0, 1)
+        model_specification <- to_model_string(Q)
+      }
     
-    # simulate theta
-    r <- matrix(cor, nd, nd)
-    diag(r) <- 1
-    theta <- rmvnorm(2000, sigma = r)
+      # difficulty parameter
+      d <- matrix(rnorm(nrow(a)))
     
-    # simulate discrimination matrix
-    a <- matrix(NA, nrow = 30, ncol = nd)
+      # simulate data under IRT
+      data <- simdata(a = a, d = d, itemtype = '2PL', Theta = theta)
     
-    for (i in 1:nd) {
-      start_index <- (i - 1) * (30/nd) + 1
-      end_index <- i * (30/nd)
-      a[start_index:end_index, i] <- rlnorm(30/nd, 0, 1)
+      # fit to mirt
+      if (nd == 5) {
+        mirt_fit <- mirt(data, model_specification, method = "MHRM")
+      } else {
+        mirt_fit <- mirt(data, model_specification)
+      }
+    
+      # fit to CDM
+      gdina_fit <- GDINA(data, Q)
+    
+      # extract mastery probability
+      mp <- personparm(gdina_fit, what = "mp")
+      
+      # extract person level theta
+      if (nd == 5) {
+        theta_hat <- fscores(mirt_fit, QMC = TRUE)
+      } else {
+        theta_hat <- fscores(mirt_fit)
+      }
+    
+      # set cut point to avoid Inf or -Inf
+      eps <- 1e-6 # 0.000001
+      mp_clip <- pmin(pmax(mp, eps), 1 - eps)
+    
+      # get correlations
+      pearson <- sapply(1:nd, function(j) cor(qnorm(mp_clip)[, j], theta_hat[, j]))
+      spearman <- sapply(1:nd, function(j) cor(qnorm(mp_clip)[, j], theta_hat[, j], method = "spearman"))
+    
+      # store results to a data frame
+      results[[cond_num]] <- data.frame(
+        structure = str, 
+        correlation = cor,
+        num_dim = nd,
+        factor = paste0("F", 1:nd),
+        pearson = pearson,
+        spearman = spearman,
+        row.names = NULL
+      )
+    
+      cond_num <- cond_num + 1
     }
-    
-    # difficulty parameter
-    d <- matrix(rnorm(nrow(a)))
-    
-    # simulate data under IRT
-    data <- simdata(a = a, d = d, itemtype = '2PL', Theta = theta)
-    
-    factor_lines <- vapply(1:nd, function(i) {
-      start_index <- (i - 1) * (30/nd) + 1
-      end_index <- i * (30/nd)
-      paste0("F", f, " = ", paste(start_index, end_index, collapse = ","))
-    })
-    cov_line <- paste0("COV = ", paste0("F", 1:nd, collapse = "*"))
-    model_specification <- paste(c(factor_lines, cov_line), collapse = "\n")
-    
-    # fit to mirt
   }
 }
 
+result_df <- bind_rows(results)
+```
+
+Iteration: ... (from 3 dimensions)
+Stage 3 ... (from 5 dimensions, MHRM method)
+
+```{r}
+result_df
 ```
 
 # Condition 1
@@ -164,37 +257,17 @@ head(theta7)
 
 ```{r}
 Q <- matrix(c(
-  1, 0, 0,
-  0, 1, 0,
-  0, 0, 1,
-  1, 1, 0,
-  1, 0, 1,
-  0, 1, 1,
-  1, 0, 0,
-  0, 1, 0,
-  0, 0, 1,
-  1, 1, 0,
-  1, 0, 1,
-  0, 1, 1,
-  1, 0, 0,
-  0, 1, 0,
-  0, 0, 1,
-  1, 1, 0,
-  1, 0, 1,
-  0, 1, 1,
-  1, 0, 0,
-  0, 1, 0,
-  0, 0, 1,
-  1, 1, 0,
-  1, 0, 1,
-  0, 1, 1,
-  1, 1, 1,
-  1, 1, 1,
-  1, 1, 1,
-  1, 1, 1,
-  1, 1, 1,
-  1, 1, 1
-), ncol = 3, byrow = TRUE)
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,1,1, 1,1,1, 1,1,1,
+            1,1,1, 1,1,1, 1,1,1
+        ), ncol = 3, byrow = TRUE)
 
 a7 <- matrix(NA, nrow=30, ncol=3)
 
@@ -244,6 +317,7 @@ head(mp7)
 est_theta_7 <- fscores(mirt7)
 head(est_theta_7)
 ```
+
 ```{r}
 eps <- 1e-6 # 0.000001
 # remove the probabilities of exactly 0 or 1 --> needed for pearson correlation calculation
@@ -269,8 +343,6 @@ cor(qnorm(mp7[,1]), est_theta_7[,1], method = "spearman")
 cor(qnorm(mp7[,2]), est_theta_7[,2], method = "spearman")
 cor(qnorm(mp7[,3]), est_theta_7[,3], method = "spearman")
 ```
-
-
 
 # Condition 10
 Q : Complex (GINDA sim30)
@@ -363,6 +435,13 @@ cor(qnorm(mp10[,1]), est_theta_10[,1], method = "spearman")
 cor(qnorm(mp10[,2]), est_theta_10[,2], method = "spearman")
 cor(qnorm(mp10[,3]), est_theta_10[,3], method = "spearman")
 ```
+
+
+
+
+
+
+
 
 
 
