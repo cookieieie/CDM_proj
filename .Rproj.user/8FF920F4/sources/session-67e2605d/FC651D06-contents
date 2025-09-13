@@ -1,0 +1,374 @@
+---
+title: "Simulation_1"
+author: "Yiming Chen"
+date: "2025-09-09"
+output: html_document
+---
+
+```{r}
+library(GDINA)
+library(mirt)
+library(mvtnorm)
+```
+
+```{r}
+set.seed(11)
+
+correlation <- c(0, 0.3, 0.6)
+num_dim <- c(3, 5)
+
+result_simple <- list()
+
+for (cor in correlation) {
+  for (nd in num_dim) {
+    
+    # simulate theta
+    r <- matrix(cor, nd, nd)
+    diag(r) <- 1
+    theta <- rmvnorm(2000, sigma = r)
+    
+    # simulate discrimination matrix
+    a <- matrix(NA, nrow = 30, ncol = nd)
+    
+    for (i in 1:nd) {
+      start_index <- (i - 1) * (30/nd) + 1
+      end_index <- i * (30/nd)
+      a[start_index:end_index, i] <- rlnorm(30/nd, 0, 1)
+    }
+    
+    # difficulty parameter
+    d <- matrix(rnorm(nrow(a)))
+    
+    # simulate data under IRT
+    data <- simdata(a = a, d = d, itemtype = '2PL', Theta = theta)
+    
+    factor_lines <- vapply(1:nd, function(i) {
+      start_index <- (i - 1) * (30/nd) + 1
+      end_index <- i * (30/nd)
+      paste0("F", f, " = ", paste(start_index, end_index, collapse = ","))
+    })
+    cov_line <- paste0("COV = ", paste0("F", 1:nd, collapse = "*"))
+    model_specification <- paste(c(factor_lines, cov_line), collapse = "\n")
+    
+    # fit to mirt
+  }
+}
+
+```
+
+# Condition 1
+Q : Simple (F1:1-10, F2:11-20, F3: 21-30)
+Correlation = 0
+Number of dimension = 3
+
+```{r}
+set.seed(11)
+
+# simulate theta
+r1 <- matrix(0, 3, 3)
+diag(r1) <- 1
+r1
+
+theta1 <- rmvnorm(2000, sigma=r1)
+head(theta1)
+```
+
+```{r}
+set.seed(11)
+
+# simulate discrimination matrix
+a1 <- matrix(NA, nrow=30, ncol=3)
+a1[1:10, 1] <- rlnorm(10, 0, 1)
+a1[11:20, 2] <- rlnorm(10, 0, 1)
+a1[21:30, 3] <- rlnorm(10, 0, 1)
+
+# 30 rows and 3 columns
+head(a1)
+```
+
+```{r}
+set.seed(11)
+
+d1 <- matrix(rnorm(nrow(a1)))
+head(d1)
+```
+
+```{r}
+set.seed(11)
+data1 <- simdata(a = a1, d = d1, itemtype = '2PL', Theta = theta1)
+head(data1)
+```
+
+```{r}
+model1 <- '
+F1 = 1-10
+F2 = 11-20
+F3 = 21-30
+COV=F1*F2*F3
+'
+
+mirt1 <- mirt(data1, model1)
+coef(mirt1)
+```
+
+```{r}
+Q1 <- (!is.na(a1))*1
+est1 <- GDINA(data1, Q1)
+
+# extract mastery probability for each attribute
+mp1 <- personparm(est1, what = "mp")
+head(mp1)
+
+# extract person level theta for all dimensions
+est_theta_1 <- fscores(mirt1)
+head(est_theta_1)
+```
+
+```{r}
+eps <- 1e-6 # 0.000001
+# remove the probabilities of exactly 0 or 1 --> needed for pearson correlation calculation
+mp1_clip <- pmin(pmax(mp1, eps), 1 - eps)
+
+plot(qnorm(mp1[,1]), est_theta_1[,1])
+plot(qnorm(mp1[,2]), est_theta_1[,2])
+plot(qnorm(mp1[,3]), est_theta_1[,3])
+
+# Pearson correlation
+# if there are many -Inf and Inf values --> return NaN when using qnorm()
+cor(qnorm(mp1_clip[,1]), est_theta_1[,1])
+cor(qnorm(mp1_clip[,2]), est_theta_1[,2])
+cor(qnorm(mp1_clip[,3]), est_theta_1[,3])
+
+# Spearman correlation
+cor(qnorm(mp1[,1]), est_theta_1[,1], method = "spearman")
+cor(qnorm(mp1[,2]), est_theta_1[,2], method = "spearman")
+cor(qnorm(mp1[,3]), est_theta_1[,3], method = "spearman")
+```
+
+# Condition 7
+Q : Complex (GINDA sim30)
+Correlation = 0
+Number of dimension = 3
+
+```{r}
+set.seed(11)
+
+# simulate theta
+r7 <- matrix(0, 3, 3)
+diag(r7) <- 1
+r7
+
+theta7 <- mvtnorm::rmvnorm(2000, sigma=r7)
+head(theta7)
+```
+
+```{r}
+Q <- matrix(c(
+  1, 0, 0,
+  0, 1, 0,
+  0, 0, 1,
+  1, 1, 0,
+  1, 0, 1,
+  0, 1, 1,
+  1, 0, 0,
+  0, 1, 0,
+  0, 0, 1,
+  1, 1, 0,
+  1, 0, 1,
+  0, 1, 1,
+  1, 0, 0,
+  0, 1, 0,
+  0, 0, 1,
+  1, 1, 0,
+  1, 0, 1,
+  0, 1, 1,
+  1, 0, 0,
+  0, 1, 0,
+  0, 0, 1,
+  1, 1, 0,
+  1, 0, 1,
+  0, 1, 1,
+  1, 1, 1,
+  1, 1, 1,
+  1, 1, 1,
+  1, 1, 1,
+  1, 1, 1,
+  1, 1, 1
+), ncol = 3, byrow = TRUE)
+
+a7 <- matrix(NA, nrow=30, ncol=3)
+
+a7[Q == 1] <- rlnorm(sum(Q == 1), 0, 1)
+head(a7)
+dim(a7)
+```
+
+```{r}
+set.seed(12)
+
+d7 <- matrix(rnorm(nrow(a7)))
+head(d7)
+
+data7 <- simdata(a = a7, d = d7, itemtype = '2PL', Theta = theta7)
+head(data7)
+```
+
+```{r}
+# specify model parameter to follow the Q matrix of loading attributes
+to_model_string <- function(Q){
+  factors <- lapply(seq_len(ncol(Q)), function(f){
+    items <- which(Q[, f] == 1)
+    paste0("F", f, " = ", paste(items, collapse = ","))
+  })
+  cov <- paste0("COV = ", paste0("F", 1:ncol(Q), collapse="*"))
+  paste(c(factors, cov), collapse = "\n")
+}
+
+model7 <- to_model_string(Q)
+cat(model7)
+
+mirt7 <- mirt(data7, model7)
+coef(mirt7)
+```
+
+
+```{r}
+Q7 <- (!is.na(a7))*1
+est7 <- GDINA(data7, Q7)
+
+# extract mastery probability for each attribute
+mp7 <- personparm(est7, what = "mp")
+head(mp7)
+
+# extract person level theta for all dimensions
+est_theta_7 <- fscores(mirt7)
+head(est_theta_7)
+```
+```{r}
+eps <- 1e-6 # 0.000001
+# remove the probabilities of exactly 0 or 1 --> needed for pearson correlation calculation
+mp7_clip <- pmin(pmax(mp7, eps), 1 - eps)
+
+head(mp7_clip)
+head(mp7)
+```
+
+```{r}
+plot(qnorm(mp7[,1]), est_theta_7[,1])
+plot(qnorm(mp7[,2]), est_theta_7[,2])
+plot(qnorm(mp7[,3]), est_theta_7[,3])
+
+# Pearson correlation
+# if there are many -Inf and Inf values --> return NaN when using qnorm()
+cor(qnorm(mp7_clip[,1]), est_theta_7[,1])
+cor(qnorm(mp7_clip[,2]), est_theta_7[,2])
+cor(qnorm(mp7_clip[,3]), est_theta_7[,3])
+
+# Spearman correlation
+cor(qnorm(mp7[,1]), est_theta_7[,1], method = "spearman")
+cor(qnorm(mp7[,2]), est_theta_7[,2], method = "spearman")
+cor(qnorm(mp7[,3]), est_theta_7[,3], method = "spearman")
+```
+
+
+
+# Condition 10
+Q : Complex (GINDA sim30)
+Correlation = 0
+Number of dimension = 5
+
+```{r}
+set.seed(12)
+
+# simulate theta
+r10 <- matrix(0, 5, 5)
+diag(r10) <- 1
+r10
+
+theta10 <- mvtnorm::rmvnorm(2000, sigma=r10)
+head(theta10)
+```
+
+```{r}
+set.seed(12)
+Q <- sim30GDINA$simQ # 30 rows, 5 columns
+a10 <- matrix(NA, nrow=30, ncol=5)
+
+a10[Q == 1] <- rlnorm(sum(Q == 1), 0, 1)
+head(a10)
+dim(a10)
+```
+
+```{r}
+set.seed(12)
+
+d10 <- matrix(rnorm(nrow(a10)))
+head(d10)
+```
+
+```{r}
+set.seed(12)
+data10 <- simdata(a = a10, d = d10, itemtype = '2PL', Theta = theta10)
+head(data10)
+```
+
+```{r}
+# specify model parameter to follow the Q matrix of loading attributes
+to_model_string <- function(Q){
+  factors <- lapply(seq_len(ncol(Q)), function(f){
+    items <- which(Q[, f] == 1)
+    paste0("F", f, " = ", paste(items, collapse = ","))
+  })
+  cov <- paste0("COV = ", paste0("F", 1:ncol(Q), collapse="*"))
+  paste(c(factors, cov), collapse = "\n")
+}
+
+model10 <- to_model_string(Q)
+cat(model10)
+
+mirt10 <- mirt(data10, model10, method = "MHRM")
+coef(mirt10)
+```
+
+```{r}
+Q10 <- (!is.na(a10))*1
+est10 <- GDINA(data10, Q10)
+
+# extract mastery probability for each attribute
+mp10 <- personparm(est10, what = "mp")
+head(mp10)
+
+# extract person level theta for all dimensions
+est_theta_10 <- fscores(mirt10, QMC = TRUE)
+head(est_theta_10)
+```
+
+```{r}
+eps <- 1e-6 # 0.000001
+# remove the probabilities of exactly 0 or 1 --> needed for pearson correlation calculation
+mp10_clip <- pmin(pmax(mp10, eps), 1 - eps)
+
+plot(qnorm(mp10[,1]), est_theta_10[,1])
+plot(qnorm(mp10[,2]), est_theta_10[,2])
+plot(qnorm(mp10[,3]), est_theta_10[,3])
+
+# Pearson correlation
+# if there are many -Inf and Inf values --> return NaN when using qnorm()
+cor(qnorm(mp10_clip[,1]), est_theta_10[,1])
+cor(qnorm(mp10_clip[,2]), est_theta_10[,2])
+cor(qnorm(mp10_clip[,3]), est_theta_10[,3])
+
+# Spearman correlation
+cor(qnorm(mp10[,1]), est_theta_10[,1], method = "spearman")
+cor(qnorm(mp10[,2]), est_theta_10[,2], method = "spearman")
+cor(qnorm(mp10[,3]), est_theta_10[,3], method = "spearman")
+```
+
+
+
+
+
+
+
+
+
