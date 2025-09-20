@@ -6,6 +6,7 @@ output: html_document
 ---
 
 ```{r}
+# load packages
 library(GDINA)
 library(mirt)
 library(mvtnorm)
@@ -14,7 +15,7 @@ library(ggplot2)
 ```
 
 ```{r}
-# create folders to save data and results
+# create folder paths to save data/results/plots
 dir.create("../sim_data", showWarnings = FALSE)
 dir.create("../sim_results", showWarnings = FALSE)
 dir.create("../sim_plots", showWarnings = FALSE)
@@ -232,7 +233,7 @@ result_df_rep <- result_df_rep %>%
                       spearman = round(spearman, 4),
                       theta_cor = round(theta_cor, 4))
 
-head(result_df_rep)
+result_df_rep
 ```
 
 ```{r}
@@ -253,6 +254,9 @@ result_df_rep_48 <- result_df_rep %>%
     mean_theta_cor = round(mean(theta_cor), 4),
     .groups = "drop"
     )
+
+result_df_rep_12
+result_df_rep_48
 ```
 
 ```{r}
@@ -413,30 +417,6 @@ structure <- c("Simple", "Complex")
 correlation <- c(0, 0.3, 0.6)
 num_dim <- c(3, 5)
 
-# for complex structure: function to align model specification to Q-matrix
-to_model_string <- function(Q){
-  factors <- lapply(seq_len(ncol(Q)), function(f){
-    items <- which(Q[, f] == 1)
-    paste0("F", f, " = ", paste(items, collapse = ","))
-  })
-  cov <- paste0("COV = ", paste0("F", 1:ncol(Q), collapse = "*"))
-  paste(c(factors, cov), collapse = "\n")
-}
-
-# for complex structure: Q-matrix with 3 dimensions
-Q_complex_3 <- matrix(c(
-            1,0,0, 0,1,0, 0,0,1,
-            1,1,0, 1,0,1, 0,1,1,
-            1,0,0, 0,1,0, 0,0,1,
-            1,1,0, 1,0,1, 0,1,1,
-            1,0,0, 0,1,0, 0,0,1,
-            1,1,0, 1,0,1, 0,1,1,
-            1,0,0, 0,1,0, 0,0,1,
-            1,1,0, 1,0,1, 0,1,1,
-            1,1,1, 1,1,1, 1,1,1,
-            1,1,1, 1,1,1, 1,1,1
-        ), ncol = 3, byrow = TRUE)
-
 results_old <- list()
 cond_num <- 1
 
@@ -556,14 +536,14 @@ result_df_old <- bind_rows(results_old)
 ```
 
 ```{r}
-result_df_old <- result_df_old %>%
-                    mutate(pearson = round(pearson, 4),
-                           spearman = round(spearman, 4))
+# result_df_old <- result_df_old %>%
+#                     mutate(pearson = round(pearson, 4),
+#                            spearman = round(spearman, 4))
 #write.csv(result_df, "result_df.csv", row.names = TRUE)
 ```
 
-
-# Condition 1
+# Single condition try-out
+## Condition 1
 Q : Simple (F1:1-10, F2:11-20, F3: 21-30)
 Correlation = 0
 Number of dimension = 3
@@ -638,14 +618,18 @@ head(est_theta_1)
 plot(est_theta_1[,2], theta1[,2])
 plot(density(est_theta_1[,2]))
 plot(density(theta1[,2]))
+
+hist(theta1[,1])
 hist(est_theta_1[,1])
+hist(theta1[,2])
 hist(est_theta_1[,2])
+
+cor(est_theta_1[,1], theta1[,1])
 cor(est_theta_1[,2], theta1[,2])
 ```
 
 ```{r}
 eps <- 1e-5 # 0.00001
-# remove the probabilities of exactly 0 or 1 --> needed for pearson correlation calculation
 mp1_clip <- pmin(pmax(mp1, eps), 1 - eps)
 
 plot(qnorm(mp1[,1]), est_theta_1[,1])
@@ -664,7 +648,7 @@ cor(qnorm(mp1[,2]), est_theta_1[,2], method = "spearman")
 cor(qnorm(mp1[,3]), est_theta_1[,3], method = "spearman")
 ```
 
-# Condition 7
+## Condition 7
 Q : Complex (GINDA sim30)
 Correlation = 0
 Number of dimension = 3
@@ -697,7 +681,8 @@ Q <- matrix(c(
 
 a7 <- matrix(NA, nrow=30, ncol=3)
 
-a7[Q == 1] <- rlnorm(sum(Q == 1), 0, 1)
+#a7[Q == 1] <- rlnorm(sum(Q == 1), 0, 1)
+a7[Q == 1] <- runif(sum(Q == 1), 0.4, 1.8)
 head(a7)
 dim(a7)
 ```
@@ -713,16 +698,6 @@ head(data7)
 ```
 
 ```{r}
-# specify model parameter to follow the Q matrix of loading attributes
-to_model_string <- function(Q){
-  factors <- lapply(seq_len(ncol(Q)), function(f){
-    items <- which(Q[, f] == 1)
-    paste0("F", f, " = ", paste(items, collapse = ","))
-  })
-  cov <- paste0("COV = ", paste0("F", 1:ncol(Q), collapse="*"))
-  paste(c(factors, cov), collapse = "\n")
-}
-
 model7 <- to_model_string(Q)
 cat(model7)
 
@@ -744,8 +719,22 @@ head(est_theta_7)
 ```
 
 ```{r}
+# check true theta and estimated theta distributions
+plot(est_theta_7[,2], theta7[,2])
+plot(density(est_theta_7[,2]))
+plot(density(theta7[,2]))
+
+hist(theta7[,1])
+hist(est_theta_7[,1])
+hist(theta7[,2])
+hist(est_theta_7[,2])
+
+cor(est_theta_7[,1], theta7[,1])
+cor(est_theta_7[,2], theta7[,2])
+```
+
+```{r}
 eps <- 1e-5 # 0.00001
-# remove the probabilities of exactly 0 or 1 --> needed for pearson correlation calculation
 mp7_clip <- pmin(pmax(mp7, eps), 1 - eps)
 
 head(mp7_clip)
@@ -769,7 +758,7 @@ cor(qnorm(mp7[,2]), est_theta_7[,2], method = "spearman")
 cor(qnorm(mp7[,3]), est_theta_7[,3], method = "spearman")
 ```
 
-# Condition 10
+## Condition 10
 Q : Complex (GINDA sim30)
 Correlation = 0
 Number of dimension = 5
@@ -791,7 +780,8 @@ set.seed(12)
 Q <- sim30GDINA$simQ # 30 rows, 5 columns
 a10 <- matrix(NA, nrow=30, ncol=5)
 
-a10[Q == 1] <- rlnorm(sum(Q == 1), 0, 1)
+#a10[Q == 1] <- rlnorm(sum(Q == 1), 0, 1)
+a10[Q == 1] <- runif(sum(Q == 1), 0.4, 1.8)
 a10
 dim(a10)
 ```
@@ -802,10 +792,6 @@ set.seed(12)
 d10 <- matrix(rnorm(nrow(a10)))
 head(d10)
 ```
-```{r}
-hist(theta10[,1])
-hist(est_theta_10[,1])
-```
 
 ```{r}
 set.seed(12)
@@ -814,16 +800,6 @@ head(data10)
 ```
 
 ```{r}
-# specify model parameter to follow the Q matrix of loading attributes
-to_model_string <- function(Q){
-  factors <- lapply(seq_len(ncol(Q)), function(f){
-    items <- which(Q[, f] == 1)
-    paste0("F", f, " = ", paste(items, collapse = ","))
-  })
-  cov <- paste0("COV = ", paste0("F", 1:ncol(Q), collapse="*"))
-  paste(c(factors, cov), collapse = "\n")
-}
-
 model10 <- to_model_string(Q)
 cat(model10)
 
@@ -845,8 +821,22 @@ head(est_theta_10)
 ```
 
 ```{r}
+# check true theta and estimated theta distributions
+plot(est_theta_10[,2], theta10[,2])
+plot(density(est_theta_10[,2]))
+plot(density(theta10[,2]))
+
+hist(theta10[,1])
+hist(est_theta_10[,1])
+hist(theta10[,2])
+hist(est_theta_10[,2])
+
+cor(est_theta_10[,1], theta10[,1])
+cor(est_theta_10[,2], theta10[,2])
+```
+
+```{r}
 eps <- 1e-5 # 0.00001
-# remove the probabilities of exactly 0 or 1 --> needed for pearson correlation calculation
 mp10_clip <- pmin(pmax(mp10, eps), 1 - eps)
 
 plot(qnorm(mp10[,1]), est_theta_10[,1])
