@@ -17,6 +17,7 @@ library(ggplot2)
 # create folders to save data and results
 dir.create("../sim_data", showWarnings = FALSE)
 dir.create("../sim_results", showWarnings = FALSE)
+dir.create("../sim_plots", showWarnings = FALSE)
 ```
 
 # Data generation and replication
@@ -290,7 +291,9 @@ plot_df <- bind_rows(plot_data)
 head(plot_df)
 # 48 conditions * 10 replicates * 2000 rows = 960,000 rows
 dim(plot_df)
+```
 
+```{r}
 plot_df_avg <- plot_df %>%
   # give each person an index within replicate
   group_by(structure, correlation, num_dim, factor, replicate) %>%
@@ -303,9 +306,7 @@ plot_df_avg <- plot_df %>%
     theta_hat = mean(theta_hat),
     .groups = "drop"
   )
-```
 
-```{r}
 # 48 conditions * 2000 persons = 96,000 rows
 nrow(plot_df_avg)
 
@@ -316,24 +317,93 @@ plot_df_avg %>%
 ```
 
 ```{r}
-plots <- plot_df_avg %>%
+# groups variable contains 2000 rows for each of 48 conditions
+# the 2000 rows are averaged from 10 replicates 
+groups <- plot_df_avg %>%
   group_by(structure, correlation, num_dim, factor) %>%
-  group_map(~{
-    ggplot(.x, aes(mp_probit, theta_hat)) +
-      geom_point(alpha = 0.3) +
-      geom_smooth(method = "lm", se = FALSE, color = "red", formula = y ~ x) +
-      labs(
-        title = paste0("Structure=", .y$structure,
-                       " | Cor=", .y$correlation,
-                       " | Dim=", .y$num_dim,
-                       " | ", .y$factor),
-        x = "Mastery Probability (probit)",
-        y = "Estimated Theta"
-      ) +
-      theme_bw()
-  })
-print(plots)
+  group_split()
+
+# labels variable contains 48 conditions with specific structure, cor, num_dim, and factor informaiton
+labels <- plot_df_avg %>%
+  group_by(structure, correlation, num_dim, factor) %>%
+  group_keys()
+
+plots <- list()
+
+for (i in seq_along(groups)) {
+  df <- groups[[i]]
+  lab <- keys[i, ]
+  
+  p <- ggplot(df, aes(mp_probit, theta_hat)) +
+    geom_point(alpha = 0.3) +
+    geom_smooth(method = "lm", se = FALSE, color = "red", formula = y ~ x) +
+    labs(
+      title = paste0("Structure=", lab$structure,
+                     " | Cor=", lab$correlation,
+                     " | Dim=", lab$num_dim,
+                     " | ", lab$factor),
+      x = "Mastery Probability",
+      y = "Estimated Theta"
+    ) +
+    theme_bw()
+  
+  plots[[i]] <- p
+  
+  # save plots
+  fname <- paste0(
+    "plot_", lab$structure,
+    "_cor", lab$correlation,
+    "_dim", lab$num_dim,
+    "_", lab$factor,
+    ".png"
+  )
+  ggsave(file.path("../sim_plots", fname), plot = p, width = 6, height = 4)
+}
 ```
+
+```{r}
+plots
+```
+
+```{r}
+groups[[1]]
+labels[1,]
+labels
+```
+
+```{r, fig.width=10, fig.height=6, dpi=300}
+# facet warp method
+ggplot(plot_df_avg, aes(mp_probit, theta_hat)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth(method = "lm", se = FALSE, color = "red", formula = y ~ x) +
+  facet_grid(structure + correlation ~ num_dim + factor) +
+  labs(
+      x = "Mastery Probability",
+      y = "Estimated Theta"
+    ) +
+  theme_bw()
+```
+
+```{r}
+# group_map() function
+# plot_df_avg %>%
+#   group_by(structure, correlation, num_dim, factor) %>%
+#   group_map(~{
+#     ggplot(.x, aes(mp_probit, theta_hat)) +
+#       geom_point(alpha = 0.3) +
+#       geom_smooth(method = "lm", se = FALSE, color = "red", formula = y ~ x) +
+#       labs(
+#         title = paste0("Structure=", .y$structure,
+#                        " | Cor=", .y$correlation,
+#                        " | Dim=", .y$num_dim,
+#                        " | ", .y$factor),
+#         x = "Mastery Probability",
+#         y = "Estimated Theta"
+#       ) +
+#       theme_bw()
+#   })
+```
+
 
 # Old version: combined procedure
 ```{r}
