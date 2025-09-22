@@ -327,7 +327,7 @@ groups <- plot_df_avg %>%
   group_by(structure, correlation, num_dim, factor) %>%
   group_split()
 
-# labels variable contains 48 conditions with specific structure, cor, num_dim, and factor informaiton
+# labels variable contains 48 conditions with specific structure, cor, num_dim, and factor information
 labels <- plot_df_avg %>%
   group_by(structure, correlation, num_dim, factor) %>%
   group_keys()
@@ -379,7 +379,7 @@ labels
 # facet warp method
 ggplot(plot_df_avg, aes(mp_probit, theta_hat)) +
   geom_point(alpha = 0.1) +
-  geom_smooth(method = "lm", se = FALSE, color = "red", formula = y ~ x) +
+  geom_smooth(method = "lm", se = FALSE, color = "red", formula = y ~ x, linewidth = 0.5) +
   facet_grid(structure + correlation ~ num_dim + factor) +
   labs(
       x = "Mastery Probability",
@@ -408,6 +408,93 @@ ggplot(plot_df_avg, aes(mp_probit, theta_hat)) +
 #   })
 ```
 
+# Look at specific conditions that had non-linear correlation plots
+```{r}
+# structure: Simple; cor = 0, num_dim = 5
+# structure: Simple; cor = 0.3, num_dim = 3
+path_spec <- c(
+  "../sim_results/res_Simple_cor0_dim5_rep3.rds",
+  "../sim_results/res_Simple_cor0_dim5_rep6.rds",
+  "../sim_results/res_Simple_cor0_dim5_rep9.rds",
+  "../sim_results/res_Simple_cor0.3_dim3_rep4.rds",
+  "../sim_results/res_Simple_cor0.3_dim3_rep7.rds",
+  "../sim_results/res_Simple_cor0.3_dim3_rep10.rds"
+)
+
+results_spec <- list()
+
+for (p in path_spec) {
+  data_spec <- readRDS(p)
+  
+  true_theta <- data_spec$true_theta
+  theta_hat <- data_spec$theta_hat
+  eps <- 1e-5
+  mp_clip   <- pmin(pmax(data_spec$mp, eps), 1 - eps)
+  cond <- data_spec$condition
+  rep_num <- sub(".*_rep([0-9]+)\\.rds", "\\1", basename(p))
+  
+  # get correlations
+  pearson <- sapply(1:cond$num_dim, function(j) cor(qnorm(mp_clip)[, j], theta_hat[, j]))
+  spearman <- sapply(1:cond$num_dim, function(j) cor(qnorm(mp_clip)[, j], theta_hat[, j], method = "spearman"))
+  theta_cor <- sapply(1:cond$num_dim, function(j) cor(true_theta[, j], theta_hat[, j]))
+  
+  # store results to a data frame
+  result <- data.frame(
+    structure = cond$structure,
+    correlation = cond$correlation,
+    num_dim = cond$num_dim,
+    factor = paste0("F", 1:cond$num_dim),
+    replicate = rep_num,
+    pearson = round(pearson, 4),
+    spearman = round(spearman, 4),
+    theta_cor = round(theta_cor, 4),
+    row.names = NULL
+  )
+  
+  results_spec[[length(results_spec) + 1]] <- result
+      
+  for (j in 1:cond$num_dim) {
+    plot_df <- data.frame(
+      mp_probit <- qnorm(mp_clip)[, j],
+      est_theta <- theta_hat[, j]
+    )
+    
+    p <- ggplot(plot_df, aes(x = mp_probit, y = est_theta)) +
+      geom_point(alpha = 0.3) +
+      geom_smooth(method = "lm", se = FALSE, color = "red", formula = y ~ x) +
+      labs(
+        title = paste0(
+          "Structure = ", cond$structure,
+          " | cor = ", cond$correlation,
+          " | num_dim = ", cond$num_dim,
+          " | Factor F", j,
+          " | rep = ", rep_num
+        ),
+        x = "Mastery Probability",
+        y = "Estimated Theta"
+      ) +
+      theme_bw()
+    print(p)
+  }
+}
+
+do.call(rbind, results_spec)
+```
+```{r}
+result_df_rep %>%
+  filter(
+    structure == "Simple",
+    correlation == 0,
+    num_dim == 5,
+    replicate %in% c(3, 6, 9))
+
+result_df_rep %>%
+  filter(
+    structure == "Simple",
+    correlation == 0.3,
+    num_dim == 3,
+    replicate %in% c(4, 7, 10))
+```
 
 # Old version: combined procedure
 ```{r}
