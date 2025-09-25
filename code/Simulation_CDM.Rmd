@@ -1,0 +1,138 @@
+---
+title: "Simulation_CDM"
+author: "Yiming Chen"
+date: "2025-09-23"
+output: html_document
+---
+
+```{r}
+# load packages
+library(GDINA)
+library(mirt)
+library(mvtnorm)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+Q_3dim <- matrix(c(
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,1,1, 1,1,1, 1,1,1,
+            1,1,1, 1,1,1, 1,1,1
+        ), ncol = 3, byrow = TRUE)
+```
+
+```{r, warning=FALSE}
+set.seed(100)
+N <- 2000
+Q <- sim30GDINA$simQ
+K <- ncol(Q)
+
+gs1 <- matrix(0.1, nrow(Q), 2)
+
+# K = 5; 1/6, 2/6, 3/6 ...
+cutoffs <- qnorm(c(1:K)/(K+1))
+m <- rep(0, K)
+vcov <- matrix(0, K, K)
+diag(vcov) <- 1
+
+# simulate multivariate response data under LLM model
+simmv <- simGDINA(N, Q,
+                  gs.parm = gs1, 
+                  att.dist = "mvnorm", 
+                  model = "LLM",
+                  mvnorm.parm = list(mean = m, sigma = vcov, cutoffs = cutoffs))
+
+dat2 <- extract(simmv, what = "dat")
+head(dat2)
+dim(dat2)
+```
+```{r}
+K
+c(1:K)/(K+1)
+```
+
+```{r}
+attr2 <- extract(simmv, what = "attribute")
+
+head(attr2)
+```
+
+```{r}
+est2 <- GDINA(dat2, Q)
+
+# extract mastery probability for each attribute
+mp2 <- personparm(est2, what = "mp")
+head(mp2)
+```
+
+```{r}
+# for complex structure: function to align model specification to Q-matrix
+to_model_string <- function(Q){
+  factors <- lapply(seq_len(ncol(Q)), function(f){
+    items <- which(Q[, f] == 1)
+    paste0("F", f, " = ", paste(items, collapse = ","))
+  })
+  cov <- paste0("COV = ", paste0("F", 1:ncol(Q), collapse = "*"))
+  paste(c(factors, cov), collapse = "\n")
+}
+```
+
+```{r}
+model_spec <- to_model_string(Q)
+cat(model_spec, "\n")
+
+colnames(dat2) <- paste0("Item", 1:ncol(dat2))
+
+mirt2 <- mirt(dat2, model_spec, method = "MHRM")
+coef(mirt2)
+```
+
+```{r}
+est_theta2 <- fscores(mirt2, QMC = TRUE)
+head(est_theta2)
+```
+
+```{r}
+mp_clip2 <- pmin(pmax(mp2, eps), 1 - eps)
+
+for (i in 1:ncol(mp_clip2)) {
+  plot(qnorm(mp2[, i]), est_theta2[, i],
+       main = paste("Factor", i),
+       xlab = "qnorm(mp_clip)",
+       ylab = "Estimated theta")
+  
+  pearson <- cor(qnorm(mp_clip2[,i]), est_theta2[, i])
+  spearman <- cor(qnorm(mp_clip2[,i]), est_theta2[, i], method = "spearman")
+  
+  cat("Factor", i,
+      ": Pearson = ", round(pearson, 4),
+      ", Spearman = ", round(spearman, 4), "\n"
+      )
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
