@@ -16,10 +16,10 @@ library(ggplot2)
 
 ```{r}
 # create folder paths to save data/results/plots
-dir.create("../sim_data", showWarnings = FALSE)
-dir.create("../sim_results", showWarnings = FALSE)
-dir.create("../sim_plots", showWarnings = FALSE)
-dir.create("../sim_plots_single", showWarnings = FALSE)
+dir.create("../IRT_sim/data", showWarnings = FALSE)
+dir.create("../IRT_sim/results", showWarnings = FALSE)
+dir.create("../IRT_sim/plots", showWarnings = FALSE)
+dir.create("../IRT_sim/plots_single", showWarnings = FALSE)
 ```
 
 # Data generation and replication
@@ -72,18 +72,18 @@ for (str in structure) {
         a[sim30GDINA$simQ == 1] <- runif(sum(sim30GDINA$simQ == 1), 0.4, 1.8)
       }
     
-      # difficulty parameter
+      # difficulty intercept
       d <- matrix(rnorm(nrow(a)))
       
-      # simulate responses
+      # simulate response data
       data <- simdata(a = a, d = d, itemtype = '2PL', Theta = theta)
       
       # save simulated response data
-      dname <- paste0("../sim_data/data_", str, "_cor", cor, "_dim", nd, "_rep", rep_id, ".csv")
+      dname <- paste0("../IRT_sim/data/data_", str, "_cor", cor, "_dim", nd, "_rep", rep_id, ".csv")
       write.csv(data, dname, row.names = FALSE)
       
       # save true theta
-      tname <- paste0("../sim_data/theta_", str, "_cor", cor, "_dim", nd, "_rep", rep_id, ".csv")
+      tname <- paste0("../IRT_sim/data/theta_", str, "_cor", cor, "_dim", nd, "_rep", rep_id, ".csv")
       write.csv(theta, tname, row.names = FALSE)
       }
     }
@@ -94,7 +94,7 @@ for (str in structure) {
 # Fit simulated data to two models
 Takes ~ 42 minutes to run
 ```{r}
-files <- list.files("../sim_data", pattern = "^data_.*\\.csv$", full.names = TRUE)
+files <- list.files("../IRT_sim/data", pattern = "^data_.*\\.csv$", full.names = TRUE)
 
 # for complex structure: function to align model specification to Q-matrix
 to_model_string <- function(Q){
@@ -152,10 +152,13 @@ for (f in files) {
   mirt_fit <- mirt(dat, model_specification, method = "MHRM")
     
   # fit to CDM
-  gdina_fit <- GDINA(dat, Q)
+  gdina_fit <- GDINA(dat, Q, model = "LLM")
   
   # model fit statistics
   # for mirt
+  mirt_AIC <- extract.mirt(mirt_fit, "AIC")
+  mirt_BIC <- extract.mirt(mirt_fit, "BIC")
+  
   if (nd == 5) {
     m2_stats <- M2(mirt_fit, QMC = TRUE)
   } else {
@@ -166,8 +169,8 @@ for (f in files) {
   gdina_stats <- modelfit(gdina_fit)
   gdina_AIC <- gdina_stats$AIC
   gdina_BIC <- gdina_stats$BIC
-  gdina_RMSEA <- gdina_stats$RMSEA2         # point estimate
-  gdina_RMSEA_CI <- gdina_stats$RMSEA2.CI   # confidence interval 
+  gdina_RMSEA2 <- gdina_stats$RMSEA2          # point estimate
+  #gdina_RMSEA_CI <- gdina_stats$RMSEA2.CI   # confidence interval 
   gdina_SRMSR <- gdina_stats$SRMSR
   
   # extract mastery probability
@@ -185,18 +188,18 @@ for (f in files) {
     true_theta = true_theta,
     mp = mp,
     theta_hat = theta_hat,
-    mirt_fitstats = list(AIC = mirt_fit@Fit$AIC, 
-                         BIC = mirt_fit@Fit$BIC, 
+    mirt_fitstats = list(AIC = mirt_AIC, 
+                         BIC = mirt_BIC, 
                          M2 = m2_stats),
     gdina_fitstats = list(AIC = gdina_AIC, 
                           BIC = gdina_BIC, 
-                          RMSEA = gdina_RMSEA, 
-                          RMSEA_CI = gdina_RMSEA_CI,
+                          RMSEA2 = gdina_RMSEA2, 
+                          #RMSEA_CI = gdina_RMSEA_CI,
                           SRMSR = gdina_SRMSR)
   )
 
   # save results to RDS
-  fname <- paste0("../sim_results/res_", str,
+  fname <- paste0("../IRT_sim/results/res_", str,
                   "_cor", cor,
                   "_dim", nd,
                   "_rep", rep_id, ".rds")
@@ -206,7 +209,7 @@ for (f in files) {
 
 # Model evaluation (check correaltion)
 ```{r}
-files <- list.files("../sim_results", pattern = "^res_.*\\.rds$", full.names = TRUE)
+files <- list.files("../IRT_sim/results", pattern = "^res_.*\\.rds$", full.names = TRUE)
 
 all_results <- list()
 
@@ -214,7 +217,7 @@ for (f in files) {
   result <- readRDS(f)
       
   true_theta <- result$true_theta
-  # remove the probabilities of exactly 0 or 1 --> needed for pearson correlation
+  
   eps <- 1e-5
   mp_clip <- pmin(pmax(result$mp, eps), 1 - eps)
   theta_hat <- result$theta_hat
@@ -284,7 +287,7 @@ result_df_rep_48
 ```
 
 ```{r}
-write.csv(result_df_rep, "../result_df_rep.csv", row.names = TRUE)
+write.csv(result_df_rep, "../IRT_sim/result_df_rep.csv", row.names = TRUE)
 #write.csv(result_df_rep_12, "../result_df_rep_12.csv", row.names = TRUE)
 #write.csv(result_df_rep_48, "../result_df_rep_48.csv", row.names = TRUE)
 ```
@@ -308,7 +311,7 @@ all_fit_stats <- lapply(files, function(f) {
     mirt_pvalue = res$mirt_fitstats$M2$p,
     gdina_AIC   = res$gdina_fitstats$AIC,
     gdina_BIC   = res$gdina_fitstats$BIC,
-    gdina_RMSEA2 = res$gdina_fitstats$RMSEA,
+    gdina_RMSEA2 = res$gdina_fitstats$RMSEA2,
     #gdina_RMSEA_low = res$gdina_fitstats$RMSEA_CI[1],
     #gdina_RMSEA_up  = res$gdina_fitstats$RMSEA_CI[2],
     gdina_SRMSR = res$gdina_fitstats$SRMSR
@@ -328,7 +331,7 @@ all_fit_stats
 ```
 
 ```{r}
-write.csv(all_fit_stats, "../model_fit_stats.csv", row.names = TRUE)
+write.csv(all_fit_stats, "../IRT_sim/model_fit_stats.csv", row.names = TRUE)
 ```
 
 # Create correlation plots
@@ -427,7 +430,7 @@ for (i in seq_along(groups)) {
     "_", lab$factor,
     ".png"
   )
-  ggsave(file.path("../sim_plots", fname), plot = p, width = 6, height = 4)
+  ggsave(file.path("../IRT_sim/plots", fname), plot = p, width = 6, height = 4)
 }
 ```
 
@@ -479,12 +482,12 @@ ggplot(plot_df_avg, aes(mp_probit, theta_hat)) +
 # structure: Simple; cor = 0, num_dim = 5
 # structure: Simple; cor = 0.3, num_dim = 3
 path_spec <- c(
-  "../sim_results/res_Simple_cor0_dim5_rep3.rds",
-  "../sim_results/res_Simple_cor0_dim5_rep6.rds",
-  "../sim_results/res_Simple_cor0_dim5_rep9.rds",
-  "../sim_results/res_Simple_cor0.3_dim3_rep4.rds",
-  "../sim_results/res_Simple_cor0.3_dim3_rep7.rds",
-  "../sim_results/res_Simple_cor0.3_dim3_rep10.rds"
+  "../IRT_sim/results/res_Simple_cor0_dim5_rep3.rds",
+  "../IRT_sim/results/res_Simple_cor0_dim5_rep6.rds",
+  "../IRT_sim/results/res_Simple_cor0_dim5_rep9.rds",
+  "../IRT_sim/results/res_Simple_cor0.3_dim3_rep4.rds",
+  "../IRT_sim/results/res_Simple_cor0.3_dim3_rep7.rds",
+  "../IRT_sim/results/res_Simple_cor0.3_dim3_rep10.rds"
 )
 
 results_spec <- list()
@@ -552,7 +555,7 @@ for (p in path_spec) {
       "_rep", rep_num,
       ".png"
     )
-    ggsave(file.path("../sim_plots_single", fname), plot = p, width = 6, height = 4)
+    ggsave(file.path("../IRT_sim/plots_single", fname), plot = p, width = 6, height = 4)
   }
 }
 
@@ -1004,11 +1007,13 @@ M2(mirt10, QMC = TRUE)$SRMSR
 # extract AIC & BIC
 mirt10@Fit$AIC
 mirt10@Fit$BIC
+extract.mirt(mirt10, "AIC")
+extract.mirt(mirt10, "BIC")
 ```
 
 ```{r}
 Q10 <- (!is.na(a10))*1
-est10 <- GDINA(data10, Q10)
+est10 <- GDINA(data10, Q10, model = "LLM")
 
 # extract mastery probability for each attribute
 mp10 <- personparm(est10, what = "mp")
@@ -1027,11 +1032,6 @@ modelfit(est10)$SRMSR
 modelfit(est10)$AIC
 modelfit(est10)$BIC
 ```
-
-```{r}
-modelfit(est10)$RMSEA2
-```
-
 
 ```{r}
 # check true theta and estimated theta distributions

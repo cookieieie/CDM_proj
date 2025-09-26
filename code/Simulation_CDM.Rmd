@@ -15,7 +15,24 @@ library(ggplot2)
 ```
 
 ```{r}
-Q_3dim <- matrix(c(
+# create folder paths to save data/results/plots
+dir.create("../CDM_sim/data", showWarnings = FALSE)
+dir.create("../CDM_sim/results", showWarnings = FALSE)
+dir.create("../CDM_sim/plots", showWarnings = FALSE)
+dir.create("../CDM_sim/plots_single", showWarnings = FALSE)
+```
+
+# Data generation and replication
+```{r}
+set.seed(101)
+
+structure <- c("Simple", "Complex")
+correlation <- c(0, 0.3, 0.6)
+num_dim <- c(3, 5)
+guess_slip <- c(0.1, 0.2, 0.3)
+rep <- 10 # 10 datasets for each condition 
+
+Q_complex_3 <- matrix(c(
             1,0,0, 0,1,0, 0,0,1,
             1,1,0, 1,0,1, 0,1,1,
             1,0,0, 0,1,0, 0,0,1,
@@ -27,53 +44,60 @@ Q_3dim <- matrix(c(
             1,1,1, 1,1,1, 1,1,1,
             1,1,1, 1,1,1, 1,1,1
         ), ncol = 3, byrow = TRUE)
+
+for (str in structure) {
+  for (cor in correlation) {
+    for (nd in num_dim) {
+      for (gs in guess_slip) {
+        for (rep_id in 1:rep) {
+          
+          if (str == "Simple") {
+            Q <- matrix(0, nrow = 30, ncol = nd)
+            block_size <- 30 / nd
+            for (i in 1:nd) {
+              start_index <- (i - 1) * block_size + 1
+              end_index <- i * block_size
+              Q[start_index:end_index, i] <- 1
+            }
+          } else if (str == "Complex" & nd == 3) {
+            Q <- Q_complex_3
+          } else if (str == "Complex" & nd == 5) {
+            Q <- sim30GDINA$simQ
+          }
+          
+          gs_parm <- matrix(gs, nrow(Q), 2)
+          
+          K <- ncol(Q)
+          cutoffs <- qnorm(c(1:K) / (K+1))
+          m <- rep(0, K)
+          vcov <- matrix(cor, K, K)
+          diag(vcov) <- 1
+          
+          # simulate response data under LLM model
+          simmv <- simGDINA(2000, Q,
+                            gs.parm = gs_parm,
+                            att.dist = "mvnorm",
+                            model = "LLM",
+                            mvnorm.parm = list(mean = m, sigma = vcov, cutoffs = cutoffs))
+          
+          data <- extract(simmv, what = "dat")
+      
+          # save simulated response data
+          dname <- paste0("../CDM_sim/data/data_", str, "_cor", cor, "_dim", nd, "_gs", gs, "_rep", rep_id, ".csv")
+          write.csv(data, dname, row.names = FALSE)
+        }
+      }
+    }
+  }
+}
 ```
 
-```{r, warning=FALSE}
-set.seed(100)
-N <- 2000
-Q <- sim30GDINA$simQ
-K <- ncol(Q)
-
-gs1 <- matrix(0.1, nrow(Q), 2)
-
-# K = 5; 1/6, 2/6, 3/6 ...
-cutoffs <- qnorm(c(1:K)/(K+1))
-m <- rep(0, K)
-vcov <- matrix(0, K, K)
-diag(vcov) <- 1
-
-# simulate multivariate response data under LLM model
-simmv <- simGDINA(N, Q,
-                  gs.parm = gs1, 
-                  att.dist = "mvnorm", 
-                  model = "LLM",
-                  mvnorm.parm = list(mean = m, sigma = vcov, cutoffs = cutoffs))
-
-dat2 <- extract(simmv, what = "dat")
-head(dat2)
-dim(dat2)
-```
+# Fit simulated data to two models
+Complex structure takes ~ 1 hr 3 min to run;
+Simple structure takes ~ 56 min to run
 ```{r}
-K
-c(1:K)/(K+1)
-```
+files <- list.files("../CDM_sim/data", pattern = "^data_.*\\.csv$", full.names = TRUE)
 
-```{r}
-attr2 <- extract(simmv, what = "attribute")
-
-head(attr2)
-```
-
-```{r}
-est2 <- GDINA(dat2, Q)
-
-# extract mastery probability for each attribute
-mp2 <- personparm(est2, what = "mp")
-head(mp2)
-```
-
-```{r}
 # for complex structure: function to align model specification to Q-matrix
 to_model_string <- function(Q){
   factors <- lapply(seq_len(ncol(Q)), function(f){
@@ -83,34 +107,372 @@ to_model_string <- function(Q){
   cov <- paste0("COV = ", paste0("F", 1:ncol(Q), collapse = "*"))
   paste(c(factors, cov), collapse = "\n")
 }
+
+for (f in files) {
+  dat <- read.csv(f)
+  
+  # extract condition from file names
+  fname <- basename(f)
+
+  str <- sub("data_(Simple|Complex)_.*", "\\1", fname)
+  cor <- as.numeric(sub(".*cor([0-9.]+)_.*", "\\1", fname))
+  nd <- as.numeric(sub(".*dim([0-9]+)_.*", "\\1", fname))
+  gs <- as.numeric(sub(".*gs([0-9]+\\.?[0-9]*)_.*", "\\1", fname))
+  rep_id <- as.numeric(sub(".*rep([0-9]+)\\.csv", "\\1", fname))
+  
+  if (str == "Simple") {
+    block_size <- 30 / nd
+    Q <- matrix(0, nrow = 30, ncol = nd)
+    for (i in 1:nd) {
+      start_index <- (i - 1) * block_size + 1
+      end_index <- i * block_size
+      Q[start_index:end_index, i] <- 1
+    }
+    factor_lines <- vapply(1:nd, function(i){
+      start_index <- (i - 1) * block_size + 1
+      end_index <- i * block_size
+      paste0("F", i, " = ", paste(start_index:end_index, collapse = ","))
+    }, character(1))
+    cov_line <- paste0("COV = ", paste0("F", 1:nd, collapse = "*"))
+    model_specification <- paste(c(factor_lines, cov_line), collapse = "\n")
+    
+  } else if (str == "Complex" & nd == 3) {
+    Q <- Q_complex_3
+    model_specification <- to_model_string(Q)
+    
+  } else if (str == "Complex" & nd == 5) {
+    Q <- sim30GDINA$simQ
+    model_specification <- to_model_string(Q)
+  }
+  
+  # fit to MIRT
+  # convert column names to Item x
+  dat_mirt <- dat
+  colnames(dat_mirt) <- paste0("Item", 1:ncol(dat))
+  
+  # for both 3 & 5 dimensions, use MHRM
+  mirt_fit <- mirt(dat_mirt, model_specification, method = "MHRM")
+    
+  # fit to CDM
+  gdina_fit <- GDINA(dat, Q, model = "LLM")
+  
+  # model fit statistics
+  # for mirt
+  mirt_AIC <- extract.mirt(mirt_fit, "AIC")
+  mirt_BIC <- extract.mirt(mirt_fit, "BIC")
+  
+  if (nd == 5) {
+    m2_stats <- M2(mirt_fit, QMC = TRUE)
+  } else {
+    m2_stats <- M2(mirt_fit)
+  }
+  
+  # for GDINA
+  gdina_stats <- modelfit(gdina_fit)
+  gdina_AIC <- gdina_stats$AIC
+  gdina_BIC <- gdina_stats$BIC
+  gdina_RMSEA2 <- gdina_stats$RMSEA2          # point estimate
+  #gdina_RMSEA_CI <- gdina_stats$RMSEA2.CI    # confidence interval 
+  gdina_SRMSR <- gdina_stats$SRMSR
+  
+  # extract mastery probability
+  mp <- personparm(gdina_fit, what = "mp")
+  
+  # extract person level theta
+  if (nd == 5) {
+    theta_hat <- fscores(mirt_fit, QMC = TRUE)
+  } else {
+    theta_hat <- fscores(mirt_fit)
+  }
+  
+  res_obj <- list(
+    condition = list(structure = str, correlation = cor, num_dim = nd, gs_parm = gs, replicate = rep_id),
+    mp = mp,
+    theta_hat = theta_hat,
+    mirt_fitstats = list(AIC = mirt_AIC, 
+                         BIC = mirt_BIC, 
+                         M2 = m2_stats),
+    gdina_fitstats = list(AIC = gdina_AIC, 
+                          BIC = gdina_BIC, 
+                          RMSEA2 = gdina_RMSEA2, 
+                          #RMSEA_CI = gdina_RMSEA_CI,
+                          SRMSR = gdina_SRMSR)
+  )
+
+  # save results to RDS
+  fname <- paste0("../CDM_sim/results/res_", str,
+                  "_cor", cor,
+                  "_dim", nd,
+                  "_gs", gs,
+                  "_rep", rep_id, ".rds")
+  saveRDS(res_obj, fname)
+}
+```
+
+# Model evaluation (check correaltion)
+```{r}
+files <- list.files("../CDM_sim/results", pattern = "^res_.*\\.rds$", full.names = TRUE)
+
+all_results <- list()
+
+for (f in files) {
+  result <- readRDS(f)
+      
+  eps <- 1e-5
+  mp_clip <- pmin(pmax(result$mp, eps), 1 - eps)
+  cond <- result$condition
+  theta_hat <- result$theta_hat 
+  
+  # correlations
+  pearson <- sapply(1:cond$num_dim, function(j)
+    cor(qnorm(mp_clip)[, j], theta_hat[, j]))
+  spearman <- sapply(1:cond$num_dim, function(j)
+    cor(qnorm(mp_clip)[, j], theta_hat[, j], method = "spearman"))
+  
+  # store results
+  all_results[[f]] <- data.frame(
+    structure = cond$structure,
+    correlation = cond$correlation,
+    num_dim = cond$num_dim,
+    gs = cond$gs_parm,
+    replicate = cond$replicate,
+    factor = paste0("F", 1:cond$num_dim),
+    pearson = pearson,
+    spearman = spearman,
+    row.names = NULL
+  )
+}
+
+result_df_rep <- bind_rows(all_results) %>%
+  arrange(
+    factor(structure, levels = c("Simple", "Complex")),
+    correlation,
+    num_dim,
+    gs,
+    replicate
+  ) %>%
+  mutate(
+    pearson = round(pearson, 4),
+    spearman = round(spearman, 4)
+  )
+```
+
+```{r}
+result_df_rep
+```
+
+```{r}
+write.csv(result_df_rep, "../CDM_sim/result_df_rep.csv", row.names = TRUE)
+```
+
+### Check model fit statistics
+```{r}
+all_fit_stats <- lapply(files, function(f) {
+  res <- readRDS(f)
+  data.frame(
+    structure   = res$condition$structure,
+    correlation = res$condition$correlation,
+    num_dim     = res$condition$num_dim,
+    guess_slip  = res$condition$gs,
+    replicate   = res$condition$replicate,
+    mirt_AIC    = res$mirt_fitstats$AIC,
+    mirt_BIC    = res$mirt_fitstats$BIC,
+    mirt_RMSEA  = res$mirt_fitstats$M2$RMSEA,
+    mirt_SRMSR  = res$mirt_fitstats$M2$SRMSR,
+    mirt_TLI    = res$mirt_fitstats$M2$TLI,
+    mirt_CFI    = res$mirt_fitstats$M2$CFI,
+    mirt_m2     = res$mirt_fitstats$M2$M2,
+    mirt_pvalue = res$mirt_fitstats$M2$p,
+    gdina_AIC   = res$gdina_fitstats$AIC,
+    gdina_BIC   = res$gdina_fitstats$BIC,
+    gdina_RMSEA2 = res$gdina_fitstats$RMSEA2,
+    #gdina_RMSEA_low = res$gdina_fitstats$RMSEA_CI[1],
+    #gdina_RMSEA_up  = res$gdina_fitstats$RMSEA_CI[2],
+    gdina_SRMSR = res$gdina_fitstats$SRMSR
+  ) 
+})
+
+all_fit_stats <- bind_rows(all_fit_stats) %>%
+  arrange(
+    factor(structure, levels = c("Simple", "Complex")), 
+    correlation,                                        
+    num_dim, 
+    guess_slip,
+    replicate                                            
+  ) %>% 
+  mutate(across(-c(1:5), ~ round(.x, 4)))
+
+all_fit_stats
+```
+
+```{r}
+write.csv(all_fit_stats, "../CDM_sim/model_fit_stats.csv", row.names = TRUE)
+```
+
+# Correlation plots for some conditions
+```{r}
+path_spec <- c(
+  "../CDM_sim/results/res_Simple_cor0_dim3_gs0.1_rep3.rds",
+  "../CDM_sim/results/res_Simple_cor0_dim3_gs0.1_rep6.rds",
+  "../CDM_sim/results/res_Simple_cor0_dim3_gs0.1_rep9.rds",
+  "../CDM_sim/results/res_Simple_cor0_dim3_gs0.2_rep4.rds",
+  "../CDM_sim/results/res_Simple_cor0_dim3_gs0.2_rep7.rds",
+  "../CDM_sim/results/res_Simple_cor0_dim3_gs0.2_rep10.rds",
+  "../CDM_sim/results/res_Complex_cor0.3_dim3_gs0.1_rep1.rds",
+  "../CDM_sim/results/res_Complex_cor0.3_dim3_gs0.1_rep5.rds",
+  "../CDM_sim/results/res_Complex_cor0.3_dim3_gs0.1_rep6.rds",
+  "../CDM_sim/results/res_Complex_cor0.6_dim5_gs0.3_rep2.rds",
+  "../CDM_sim/results/res_Complex_cor0.6_dim5_gs0.3_rep8.rds",
+  "../CDM_sim/results/res_Complex_cor0.6_dim5_gs0.3_rep9.rds"
+)
+
+results_spec <- list()
+
+for (p in path_spec) {
+  data_spec <- readRDS(p)
+  
+  theta_hat <- data_spec$theta_hat
+  mp <- data_spec$mp
+  
+  eps <- 1e-5
+  mp_clip   <- pmin(pmax(mp, eps), 1 - eps)
+  cond <- data_spec$condition
+  rep_num <- sub(".*_rep([0-9]+)\\.rds", "\\1", basename(p))
+
+  # get correlations
+  pearson <- sapply(1:cond$num_dim, function(j) cor(qnorm(mp_clip)[, j], theta_hat[, j]))
+  spearman <- sapply(1:cond$num_dim, function(j) cor(qnorm(mp_clip)[, j], theta_hat[, j], method = "spearman"))
+  
+  # store results to a data frame
+  result <- data.frame(
+    structure = cond$structure,
+    correlation = cond$correlation,
+    num_dim = cond$num_dim,
+    guess_slip = cond$gs_parm,
+    factor = paste0("F", 1:cond$num_dim),
+    replicate = rep_num,
+    pearson = round(pearson, 4),
+    spearman = round(spearman, 4),
+    row.names = NULL
+  )
+  
+  results_spec[[length(results_spec) + 1]] <- result
+      
+  for (j in 1:cond$num_dim) {
+    plot_df <- data.frame(
+      mp_probit <- qnorm(mp_clip)[, j],
+      est_theta <- theta_hat[, j]
+    )
+    
+    p <- ggplot(plot_df, aes(x = mp_probit, y = est_theta)) +
+      geom_point(alpha = 0.3) +
+      geom_smooth(method = "lm", se = FALSE, color = "red", formula = y ~ x) +
+      labs(
+        title = paste0(
+          cond$structure,
+          " | cor = ", cond$correlation,
+          " | num_dim = ", cond$num_dim,
+          " | guess_slip = ", cond$gs_parm,
+          " | Factor F", j,
+          " | rep = ", rep_num
+        ),
+        x = "Mastery Probability",
+        y = "Estimated Theta"
+      ) +
+      theme_bw()
+    
+    print(p)
+    
+    # save plots
+    fname <- paste0(
+      "plot_", cond$structure,
+      "_cor", cond$correlation,
+      "_dim", cond$num_dim,
+      "_gs", cond$gs_parm,
+      "_Factor", j,
+      "_rep", rep_num,
+      ".png"
+    )
+    ggsave(file.path("../CDM_sim/plots_single", fname), plot = p, width = 6, height = 4)
+  }
+}
+
+do.call(rbind, results_spec)
+```
+
+# Single condition try-out
+Complex, cor = 0, gs = 0.1, ndim = 5
+```{r, warning=FALSE}
+set.seed(101)
+N <- 2000
+Q <- sim30GDINA$simQ
+K <- ncol(Q)
+
+gs <- matrix(0.1, nrow(Q), 2)
+
+# K = 5; 1/6, 2/6, 3/6 ...
+cutoffs <- qnorm(c(1:K)/(K+1))
+m <- rep(0, K)
+vcov <- matrix(0, K, K)
+diag(vcov) <- 1
+
+# simulate multivariate response data under LLM model
+simmv <- simGDINA(N, Q,
+                  gs.parm = gs, 
+                  att.dist = "mvnorm", 
+                  model = "LLM",
+                  mvnorm.parm = list(mean = m, sigma = vcov, cutoffs = cutoffs))
+
+dat <- extract(simmv, what = "dat")
+head(dat)
+dim(dat)
+```
+
+```{r}
+attr <- extract(simmv, what = "attribute")
+head(attr)
+```
+
+```{r}
+est <- GDINA(dat, Q, model = "LLM")
+
+# extract mastery probability for each attribute
+mp <- personparm(est, what = "mp")
+head(mp)
+```
+```{r}
+# correlation between alpha and mp
+sapply(1:5, function(j) {
+  cor(attr[,j], mp[,j])
+})
 ```
 
 ```{r}
 model_spec <- to_model_string(Q)
 cat(model_spec, "\n")
 
-colnames(dat2) <- paste0("Item", 1:ncol(dat2))
+colnames(dat) <- paste0("Item", 1:ncol(dat))
 
-mirt2 <- mirt(dat2, model_spec, method = "MHRM")
-coef(mirt2)
+mirt_fit <- mirt(dat, model_spec, method = "MHRM")
+#coef(mirt_fit)
 ```
 
 ```{r}
-est_theta2 <- fscores(mirt2, QMC = TRUE)
-head(est_theta2)
+est_theta <- fscores(mirt_fit, QMC = TRUE)
+head(est_theta)
 ```
 
 ```{r}
-mp_clip2 <- pmin(pmax(mp2, eps), 1 - eps)
+mp_clip <- pmin(pmax(mp, eps), 1 - eps)
 
-for (i in 1:ncol(mp_clip2)) {
-  plot(qnorm(mp2[, i]), est_theta2[, i],
+for (i in 1:ncol(mp_clip)) {
+  plot(qnorm(mp[, i]), est_theta[, i],
        main = paste("Factor", i),
        xlab = "qnorm(mp_clip)",
        ylab = "Estimated theta")
   
-  pearson <- cor(qnorm(mp_clip2[,i]), est_theta2[, i])
-  spearman <- cor(qnorm(mp_clip2[,i]), est_theta2[, i], method = "spearman")
+  pearson <- cor(qnorm(mp_clip[,i]), est_theta[, i])
+  spearman <- cor(qnorm(mp_clip[,i]), est_theta[, i], method = "spearman")
   
   cat("Factor", i,
       ": Pearson = ", round(pearson, 4),
@@ -119,6 +481,10 @@ for (i in 1:ncol(mp_clip2)) {
 }
 ```
 
+```{r}
+max(qnorm(mp_clip[,1]))
+min(qnorm(mp_clip[,1]))
+```
 
 
 
