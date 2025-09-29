@@ -262,7 +262,8 @@ result_df_rep
 ```
 
 ```{r}
-write.csv(result_df_rep, "../CDM_sim/result_df_rep.csv", row.names = TRUE)
+# save the result df as cor_result_rep.csv
+write.csv(result_df_rep, "../CDM_sim/cor_result_rep.csv", row.names = TRUE)
 ```
 
 ### Check model fit statistics
@@ -485,6 +486,38 @@ for (i in 1:ncol(mp_clip)) {
 max(qnorm(mp_clip[,1]))
 min(qnorm(mp_clip[,1]))
 ```
+
+```{r}
+length(unique(round(mp_clip[,1], 4)))
+length(unique(round(mp_clip[,2], 4)))
+length(unique(round(mp_clip[,3], 4)))
+```
+
+```{r}
+simple_0.1 <- readRDS("../CDM_sim/results/res_Simple_cor0_dim3_gs0.1_rep3.rds")
+#simple_0.3 <- readRDS("../CDM_sim/results/res_Simple_cor0.3_dim3_gs0.3_rep3.rds")
+
+mp_clip_0.1 <- pmin(pmax(simple_0.1$mp, eps), 1 - eps)
+
+factor1_0.1 <- mp_clip_0.1[,1]
+factor2_0.1 <- mp_clip_0.1[,2]
+factor3_0.1 <- mp_clip_0.1[,3]
+print("------------------For Factor 1---------------------")
+length(unique(round(qnorm(factor1_0.1), 4)))
+table(round(qnorm(factor1_0.1), 4))
+print("------------------For Factor 2---------------------")
+length(unique(round(qnorm(factor2_0.1), 4)))
+table(round(qnorm(factor2_0.1), 4))
+print("------------------For Factor 3---------------------")
+length(unique(round(qnorm(factor3_0.1), 4)))
+table(round(qnorm(factor3_0.1), 4))
+```
+
+
+
+
+
+
 
 
 
