@@ -1,0 +1,414 @@
+---
+title: "CV_mp"
+author: "Yiming Chen"
+date: "2025-10-01"
+output:
+  pdf_document: default
+  html_document: default
+---
+# Split simualted item response data into k-folds for cross-validation
+Each entry is designed to have missing entries reserved for test set.
+
+## A function to randomly assign fold numbers for each row (individual)
+```{r}
+gen_data_for_row <- function(J,nfold){
+
+  # Number of complete repeats per fold
+  base_repeats <- floor(J / nfold)
+  remaining <- J %% nfold
+
+  # Create deterministic part
+  folds <- rep(1:nfold, times = base_repeats)
+
+  # Add randomly selected leftover folds
+  if (remaining > 0) {
+    folds <- c(folds, sample(1:nfold, size = remaining))
+  }
+
+  # Shuffle the fold assignments for this row
+  sample(folds, size = J)
+}
+```
+
+```{r}
+# example use case
+# each run time produces different results -> should set.seed()
+gen_data_for_row(30, 5)
+gen_data_for_row(5, 5)
+```
+
+## A function to split item response data into k-folds 
+```{r}
+split_data <- function(data,kfold=5,prop=NULL){
+  if(!is.matrix(data)){
+    data <- as.matrix(data)
+  }
+
+  N <- nrow(data)
+  J <- ncol(data)
+  ind <- matrix(NA,nrow = N,ncol = J)
+  for(i in 1:N){
+    ind[i,] <- gen_data_for_row(J,kfold)
+  }
+  newdata <- list()
+  for(n in 1:kfold){
+    kfold.loc <- which(ind==n)
+    temp <- data
+    temp[kfold.loc] <- NA
+    newdata[[n]] <- as.data.frame(temp)
+  }
+
+  ret <- list(cvdata=newdata,cvfold=ind,kfold=kfold,rawdata=data)
+}
+```
+
+## Apply split_data function to get "cvdata"
+```{r}
+# set seed to ensure reproducibility in splitting data 
+set.seed(101)
+
+# read CDM simulated data and save them into a list called cvdata
+files <- list.files("../CDM_sim/data", pattern = "^data_.*\\.csv$", full.names = TRUE)
+names(files) <- basename(files)    
+
+# cdm_data is a list of 120 data frames
+cdm_data <- lapply(files, read.csv)
+length(cdm_data)
+
+# generate cvdata using split_data function
+cvdata <- lapply(cdm_data, split_data, kfold = 5)
+
+# access data name for each data
+names(cvdata)[[1]]
+```
+
+```{r}
+#cvdata$data_Complex_cor0_dim3_rep1.csv$cvfold[1:5,]
+cvdata[[1]]$cvfold[1:5,]
+```
+
+# Cross Validated Congitive Diagnostic Model Fitting
+```{r}
+cv_fit_cdm <- function(cvdata, Q, estimator="mp", ...){
+  N <- nrow(cvdata$rawdata)
+  J <- ncol(cvdata$rawdata)
+  K <- ncol(Q)
+  ind <- cvdata$cvfold
+
+  metrics <- fit <- obs_pred_p <- train_metrics <- train_obs_pred_p <- list()
+  for(n in 1:cvdata$kfold){
+    nfold.loc <- which(ind==n)
+    train.loc <- which(ind!=n)
+    nfold.length <- length(nfold.loc)
+    train.length <- length(train.loc)
+    
+    # Fit model
+    fit[[n]] <- GDINA(cvdata$cvdata[[n]],Q, model = "LLM", verbose = 0)
+
+    # Validation sample metrics
+    person_parm <- personparm(fit[[n]], what = estimator)
+    item_parm <- coef(fit[[n]], what = "delta")
+    pred_p <- NULL
+    
+    for (j in 1:J) {
+      qj <- Q[j, ]
+      pred_p <- cbind(pred_p, plogis(cbind(1, person_parm[, which(qj == 1), drop = FALSE]) %*% item_parm[[j]]))
+    }
+    
+    pred_Y <- 1 * (pred_p > matrix(runif(N * J), nrow = N, ncol = J))
+    
+    p <- pred_p[nfold.loc]
+    pred.data <- pred_Y[nfold.loc]
+    
+    # profiles <- as.matrix(personparm(fit[[n]],what=estimator)[,1:K])
+    # gr <- GDINA:::matchMatrix(as.matrix(attributepattern(K)),profiles)
+    # cdmp <- t(fit[[n]]$LC.prob[,gr])
+    # p <- cdmp[nfold.loc]
+    # pred.data <- rbinom(nfold.length,1,p)
+    
+    obs.data <- cvdata$rawdata[nfold.loc]
+    opp <- data.frame(obs.data, pred.data, p)
+    obs_pred_p[[n]] <- opp[complete.cases(opp),]
+    metrics[[n]] <- classification_metrics(obs_pred_p[[n]]$obs.data, obs_pred_p[[n]]$pred.data, obs_pred_p[[n]]$p)
+    
+    # Training sample metrics
+    
+    #train_p <- cdmp[train.loc]
+    #train_pred.data <- rbinom(train.length,1,train_p)
+    
+    train_p <- pred_p[train.loc]
+    train_pred.data <- pred_Y[train.loc]
+    train_obs.data <- cvdata$rawdata[train.loc]
+    train_opp <- data.frame(train_obs.data,train_pred.data,train_p)
+    train_obs_pred_p[[n]] <- train_opp[complete.cases(train_opp),]
+    train_metrics[[n]] <- classification_metrics(train_obs_pred_p[[n]]$train_obs.data,train_obs_pred_p[[n]]$train_pred.data,train_obs_pred_p[[n]]$train_p)
+  }
+
+  output <- combine_metrics_table(metrics)
+  train_output <- combine_metrics_table(train_metrics)
+  
+  list(
+    metrics = output,
+    obs_pred_p = obs_pred_p,
+    metrics_kfold = metrics,
+    train_metrics = train_output,
+    train_obs_pred_p = train_obs_pred_p,
+    train_metrics_kfold = train_metrics
+  )
+}
+```
+
+
+```{r}
+classification_metrics <- function(observed, predicted, p) {
+  # Ensure input vectors are numeric
+  observed <- as.numeric(as.character(observed))
+  predicted <- as.numeric(as.character(predicted))
+  p <- as.numeric(p)
+
+  # Confusion matrix components
+  tp <- sum(predicted == 1 & observed == 1)
+  tn <- sum(predicted == 0 & observed == 0)
+  fp <- sum(predicted == 1 & observed == 0)
+  fn <- sum(predicted == 0 & observed == 1)
+  cat("\nTP=",tp," TN=",tn," FP=",fp,"FN=",fn)
+  # Basic metrics
+  accuracy <- mean(predicted == observed)
+  precision <- if ((tp + fp) == 0) NA else tp / (tp + fp)
+  recall <- if ((tp + fn) == 0) NA else tp / (tp + fn)
+  specificity <- if ((tn + fp) == 0) NA else tn / (tn + fp)
+  f1_score <- if (is.na(precision) || is.na(recall) || (precision + recall == 0)) NA else 2 * precision * recall / (precision + recall)
+
+  # MCC
+  mcc_denom <- sqrt(
+    as.numeric((tp + fp)) *
+      as.numeric((tp + fn)) *
+      as.numeric((tn + fp)) *
+      as.numeric((tn + fn))
+  )
+  mcc <- if (mcc_denom == 0) NA else ((tp * tn) - (fp * fn)) / mcc_denom
+
+  # AUC
+  auc_val <- tryCatch({
+    pROC::auc(pROC::roc(observed, p))
+  }, error = function(e) NA)
+
+  # PR AUC
+  pr_auc_val <- tryCatch({
+    fg <- p[observed == 1]
+    bg <- p[observed == 0]
+    pr <- PRROC::pr.curve(scores.class0 = fg, scores.class1 = bg)
+    pr$auc.integral
+  }, error = function(e) NA)
+
+  # Log Loss
+  log_loss <- {
+    eps <- 1e-15
+    p <- pmin(pmax(p, eps), 1 - eps)
+    -mean(observed * log(p) + (1 - observed) * log(1 - p))
+  }
+
+  # Confusion matrix
+  confusion_matrix <- matrix(c(tn, fp, fn, tp), nrow = 2, byrow = TRUE,
+                             dimnames = list("Predicted" = c("0", "1"),
+                                             "Actual" = c("0", "1")))
+
+  # Return all
+  return(list(
+    accuracy = accuracy,
+    precision = precision,
+    recall = recall,
+    specificity = specificity,
+    f1_score = f1_score,
+    mcc = mcc,
+    auc = auc_val,
+    pr_auc = pr_auc_val,
+    log_loss = log_loss,
+    confusion_matrix = confusion_matrix
+  ))
+}
+```
+
+
+```{r}
+combine_metrics_table <- function(metrics_list,digits=3) {
+  # Extract all scalar metric names (exclude confusion_matrix)
+  metric_names <- setdiff(names(metrics_list[[1]]), "confusion_matrix")
+
+  # Convert each list element to a one-row data frame
+  metrics_df <- do.call(rbind, lapply(metrics_list, function(m) {
+    as.data.frame(as.list(m[metric_names]))
+  }))
+
+  # Compute mean for each metric
+  average_row <- colMeans(metrics_df, na.rm = TRUE)
+
+  # Add the average as the final row
+  metrics_df <- rbind(metrics_df, Average = average_row)
+
+  metrics_df <- round(metrics_df, digits)
+  # Set row names: Fold_1, Fold_2, ..., Average
+  rownames(metrics_df) <- c(paste0("Fold_", seq_len(nrow(metrics_df) - 1)), "Average")
+
+  return(metrics_df)
+}
+```
+
+```{r}
+#cv_fit_cdm(cvdata[[1]], Q)
+```
+
+```{r}
+#cvdata[[1]]$cvdata[[1]]
+ind <- cvdata[[1]]$cvfold
+nfold.loc <- which(ind==1)
+train.loc <- which(ind != 1)
+length(nfold.loc)
+length(train.loc)
+```
+
+
+
+Single try out
+```{r}
+# set seed to ensure reproducibility in splitting data 
+set.seed(101)
+
+# read CDM simulated data and save them into a list called cvdata
+files <- list.files("../CDM_sim/data", pattern = "^data_.*\\.csv$", full.names = TRUE)
+names(files) <- basename(files)    
+
+# cdm_data is a list of 120 data frames
+cdm_data <- lapply(files, read.csv)
+length(cdm_data)
+
+# generate cvdata using split_data function
+cvdata <- lapply(cdm_data, split_data, kfold = 5)
+
+# access data name for each data
+names(cvdata)[[1]]
+```
+
+```{r}
+#cvdata$data_Complex_cor0_dim3_rep1.csv$cvfold[1:5,]
+cvdata[[1]]$cvfold[1:5,]
+names(cvdata)[[10]]
+```
+
+```{r, message=FALSE}
+set.seed(101)
+Q_complex_3 <- matrix(c(
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,1,1, 1,1,1, 1,1,1,
+            1,1,1, 1,1,1, 1,1,1
+        ), ncol = 3, byrow = TRUE)
+
+# cv1 <- cv_fit_cdm(cvdata[[1]], Q_complex_3, model = "LLM")
+# cv1$metrics$accuracy[6]
+
+res <- list()
+for (i in 1:10){
+  res[[i]] <- cv_fit_cdm(cvdata[[i]], Q_complex_3)
+}
+
+acc_try <- sapply(res, function(x) x$metrics$accuracy[6])
+
+# get average of 10 replication
+mean_acc_try <- mean(acc_try)
+
+acc_try
+mean_acc_try
+
+# print the TP/TN/FP/FN results
+# cat("\nTP=",tp," TN=",tn," FP=",fp,"FN=",fn)
+```
+
+```{r}
+set.seed(1000)
+
+dat <- sim10GDINA$simdat
+Q <- sim10GDINA$simQ
+
+#--------GDINA model --------#
+
+mod1 <- GDINA(dat = dat, Q = Q, model = "LLM")
+#mod1
+
+head(dat)
+dim(dat) # 1000 rows, 10 columns
+# binary mastery profile
+# head(personparm(mod1))
+
+# A1 A2 A3
+# [1,]  1  0  1
+
+# estimated mastery probability
+pp <- personparm(mod1,what = "mp")
+head(pp) # 1000 rows, 3 columns
+
+#  A1     A2     A3
+# [1,] 0.9967 0.1134 0.9780
+
+# estimated item parameter delta
+ip <- coef(mod1,what = "delta")
+ip[[2]]
+
+# d0      d1
+# -2.1312  3.2737
+
+N <- nrow(dat)
+J <- ncol(dat)
+pred.p <- NULL
+
+for(j in 1:J){
+  qj <- Q[j,]
+  pred.p <- cbind(pred.p, plogis(cbind(1, pp[, which(qj == 1)]) %*% ip[[j]]))
+}
+
+dim(pred.p)
+head(pred.p)
+
+# make the uniform random draws a matrix same as the dimension of N * J
+pred.Y <- 1 * (pred.p > matrix(runif(N * J), nrow = N, ncol = J))
+
+dim(pred.Y)
+head(pred.Y)
+```
+
+```{r}
+Q[2,] # qj
+
+head(pp[,Q[2,]]) # can be wrong for items require multiple attributes, or require attributes other than A1
+
+which(Q[2,] == 1) # return the correct attribute number required for item 2
+head(pp[,which(Q[2,] == 1)]) # correct --> pp[, which(qj == 1)]
+
+head(cbind(1,pp[,which(Q[2,] == 1)])) # add 1 as a column 
+
+ip[[2]]
+```
+```{r}
+dim(matrix(runif(N * J), nrow = N, ncol = J))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
