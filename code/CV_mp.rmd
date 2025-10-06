@@ -6,6 +6,17 @@ output:
   pdf_document: default
   html_document: default
 ---
+
+```{r}
+# load packages
+library(GDINA)
+library(mirt)
+library(mvtnorm)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+```
+
 # Split simualted item response data into k-folds for cross-validation
 Each entry is designed to have missing entries reserved for test set.
 
@@ -62,31 +73,6 @@ split_data <- function(data,kfold=5,prop=NULL){
 }
 ```
 
-## Apply split_data function to get "cvdata"
-```{r}
-# set seed to ensure reproducibility in splitting data 
-set.seed(101)
-
-# read CDM simulated data and save them into a list called cvdata
-files <- list.files("../CDM_sim/data", pattern = "^data_.*\\.csv$", full.names = TRUE)
-names(files) <- basename(files)    
-
-# cdm_data is a list of 120 data frames
-cdm_data <- lapply(files, read.csv)
-length(cdm_data)
-
-# generate cvdata using split_data function
-cvdata <- lapply(cdm_data, split_data, kfold = 5)
-
-# access data name for each data
-names(cvdata)[[1]]
-```
-
-```{r}
-#cvdata$data_Complex_cor0_dim3_rep1.csv$cvfold[1:5,]
-cvdata[[1]]$cvfold[1:5,]
-```
-
 # Cross Validated Congitive Diagnostic Model Fitting
 ```{r}
 cv_fit_cdm <- function(cvdata, Q, estimator="mp", ...){
@@ -128,7 +114,7 @@ cv_fit_cdm <- function(cvdata, Q, estimator="mp", ...){
     
     obs.data <- cvdata$rawdata[nfold.loc]
     opp <- data.frame(obs.data, pred.data, p)
-    obs_pred_p[[n]] <- opp[complete.cases(opp),]
+    obs_pred_p[[n]] <- opp[complete.cases(opp), ]
     metrics[[n]] <- classification_metrics(obs_pred_p[[n]]$obs.data, obs_pred_p[[n]]$pred.data, obs_pred_p[[n]]$p)
     
     # Training sample metrics
@@ -138,10 +124,11 @@ cv_fit_cdm <- function(cvdata, Q, estimator="mp", ...){
     
     train_p <- pred_p[train.loc]
     train_pred.data <- pred_Y[train.loc]
+    
     train_obs.data <- cvdata$rawdata[train.loc]
-    train_opp <- data.frame(train_obs.data,train_pred.data,train_p)
-    train_obs_pred_p[[n]] <- train_opp[complete.cases(train_opp),]
-    train_metrics[[n]] <- classification_metrics(train_obs_pred_p[[n]]$train_obs.data,train_obs_pred_p[[n]]$train_pred.data,train_obs_pred_p[[n]]$train_p)
+    train_opp <- data.frame(train_obs.data, train_pred.data, train_p)
+    train_obs_pred_p[[n]] <- train_opp[complete.cases(train_opp), ]
+    train_metrics[[n]] <- classification_metrics(train_obs_pred_p[[n]]$train_obs.data, train_obs_pred_p[[n]]$train_pred.data, train_obs_pred_p[[n]]$train_p)
   }
 
   output <- combine_metrics_table(metrics)
@@ -158,7 +145,6 @@ cv_fit_cdm <- function(cvdata, Q, estimator="mp", ...){
 }
 ```
 
-
 ```{r}
 classification_metrics <- function(observed, predicted, p) {
   # Ensure input vectors are numeric
@@ -171,7 +157,8 @@ classification_metrics <- function(observed, predicted, p) {
   tn <- sum(predicted == 0 & observed == 0)
   fp <- sum(predicted == 1 & observed == 0)
   fn <- sum(predicted == 0 & observed == 1)
-  cat("\nTP=",tp," TN=",tn," FP=",fp,"FN=",fn)
+  cat("\nTP=", tp, " TN=", tn, " FP=", fp, "FN=", fn)
+  
   # Basic metrics
   accuracy <- mean(predicted == observed)
   precision <- if ((tp + fp) == 0) NA else tp / (tp + fp)
@@ -182,9 +169,9 @@ classification_metrics <- function(observed, predicted, p) {
   # MCC
   mcc_denom <- sqrt(
     as.numeric((tp + fp)) *
-      as.numeric((tp + fn)) *
-      as.numeric((tn + fp)) *
-      as.numeric((tn + fn))
+    as.numeric((tp + fn)) *
+    as.numeric((tn + fp)) *
+    as.numeric((tn + fn))
   )
   mcc <- if (mcc_denom == 0) NA else ((tp * tn) - (fp * fn)) / mcc_denom
 
@@ -229,7 +216,6 @@ classification_metrics <- function(observed, predicted, p) {
 }
 ```
 
-
 ```{r}
 combine_metrics_table <- function(metrics_list,digits=3) {
   # Extract all scalar metric names (exclude confusion_matrix)
@@ -254,22 +240,8 @@ combine_metrics_table <- function(metrics_list,digits=3) {
 }
 ```
 
-```{r}
-#cv_fit_cdm(cvdata[[1]], Q)
-```
 
-```{r}
-#cvdata[[1]]$cvdata[[1]]
-ind <- cvdata[[1]]$cvfold
-nfold.loc <- which(ind==1)
-train.loc <- which(ind != 1)
-length(nfold.loc)
-length(train.loc)
-```
-
-
-
-Single try out
+## Apply split_data function to get CDM cvdata
 ```{r}
 # set seed to ensure reproducibility in splitting data 
 set.seed(101)
@@ -283,18 +255,204 @@ cdm_data <- lapply(files, read.csv)
 length(cdm_data)
 
 # generate cvdata using split_data function
-cvdata <- lapply(cdm_data, split_data, kfold = 5)
+cvdata_cdm <- lapply(cdm_data, split_data, kfold = 5)
 
 # access data name for each data
-names(cvdata)[[1]]
+names(cvdata_cdm)[[1]]
 ```
 
 ```{r}
 #cvdata$data_Complex_cor0_dim3_rep1.csv$cvfold[1:5,]
-cvdata[[1]]$cvfold[1:5,]
-names(cvdata)[[10]]
+cvdata_cdm[[1]]$cvfold[1:5,]
+names(cvdata_cdm)[1:10]
+names(cvdata_cdm)[11:20]
+
+#cvdata_cdm[[1]]$cvdata_cdm[[1]]
+ind <- cvdata_cdm[[1]]$cvfold
+nfold.loc <- which(ind==1)
+train.loc <- which(ind != 1)
+length(nfold.loc)
+length(train.loc)
 ```
 
+## Apply cv_fit_cdm function to CDM data
+```{r}
+# define Q-matrix for different conditions and then run cv_fit_cdm
+run_cv_fit <- function(cvobj, name){
+  str <- if (grepl("Simple", name)) "Simple" else "Complex"
+  nd <- as.numeric(sub(".*dim([0-9]+)_.*", "\\1", name))
+  
+   if (str == "Simple") {
+    block_size <- 30 / nd
+    Q <- matrix(0, nrow = 30, ncol = nd)
+    for (i in 1:nd) {
+      start_index <- (i - 1) * block_size + 1
+      end_index <- i * block_size
+      Q[start_index:end_index, i] <- 1
+    }
+  } else if (str == "Complex" & nd == 3) {
+    Q <- Q_complex_3
+  } else if (str == "Complex" & nd == 5) {
+    Q <- sim30GDINA$simQ
+  }
+  
+  res <- cv_fit_cdm(cvobj, Q, model = "LLM")
+  return(res)
+}
+```
+
+```{r, message=FALSE}
+# ~ 5 minutes
+set.seed(101)
+
+simple_dim3 <- grep("Simple.*dim3", names(cvdata_cdm), value = TRUE)
+res_simple_dim3 <- mapply(run_cv_fit, cvobj = cvdata_cdm[simple_dim3], name = simple_dim3, SIMPLIFY = FALSE)
+
+simple_dim5 <- grep("Simple.*dim5", names(cvdata_cdm), value = TRUE)
+res_simple_dim5 <- mapply(run_cv_fit, cvobj = cvdata_cdm[simple_dim5], name = simple_dim5, SIMPLIFY = FALSE)
+
+complex_dim3 <- grep("Complex.*dim3", names(cvdata_cdm), value = TRUE)
+res_complex_dim3 <- mapply(run_cv_fit, cvobj = cvdata_cdm[complex_dim3], name = complex_dim3, SIMPLIFY = FALSE)
+
+complex_dim5 <- grep("Complex.*dim5", names(cvdata_cdm), value = TRUE)
+res_complex_dim5 <- mapply(run_cv_fit, cvobj = cvdata_cdm[complex_dim5], name = complex_dim5, SIMPLIFY = FALSE)
+```
+
+```{r}
+#res_complex_dim3$data_Complex_cor0_dim3_rep10.csv$metrics
+```
+
+```{r}
+res_all <- c(res_simple_dim3, res_simple_dim5, res_complex_dim3, res_complex_dim5)
+
+# dimension of metrics_all is 120 * 13, 12 conditions each have 10 replications
+metrics_all_cdm <- lapply(names(res_all), function(name) {
+  res <- res_all[[name]]
+  data.frame(
+    structure = ifelse(str_detect(name, "Simple"), "Simple", "Complex"),
+    correlation = as.numeric(str_extract(name, "(?<=cor)\\d+(\\.\\d+)?")),
+    dim = as.numeric(str_extract(name, "(?<=dim)\\d+")),
+    replicate = as.numeric(str_extract(name, "(?<=rep)\\d+")),
+    accuracy = res$metrics$accuracy[6],
+    precision = res$metrics$precision[6],
+    recall  = res$metrics$recall[6],
+    specificity  = res$metrics$specificity[6],
+    f1_score  = res$metrics$f1_score[6],
+    mcc = res$metrics$mcc[6],
+    auc  = res$metrics$auc[6],
+    pr_auc = res$metrics$pr_auc[6],
+    log_loss  = res$metrics$log_loss[6]
+  )
+}) %>%
+  bind_rows()
+
+# group by str, cor, and dim to get summarized metrics of 12 conditions
+metrics_all_cdm %>%
+  group_by(structure, correlation, dim) %>%
+  summarize(
+    mean_accuracy = mean(accuracy),
+    mean_precision = mean(precision),
+    mean_recall = mean(recall),
+    mean_specificity = mean(specificity),
+    mean_f1_score = mean(f1_score),
+    mean_mcc = mean(mcc),
+    mean_auc = mean(auc),
+    mean_pr_auc = mean(pr_auc),
+    mean_log_loss = mean(log_loss),
+    .groups = "drop"
+    )
+```
+
+```{r}
+res_all[["data_Complex_cor0_dim3_rep1.csv"]]
+res_all[["data_Complex_cor0_dim3_rep1.csv"]]$metrics$accuracy[6]
+res_all[["data_Complex_cor0_dim3_rep1.csv"]]$metrics$precision[6]
+```
+```{r}
+metrics_all_cdm
+```
+
+## Apply split_data function to get IRT cvdata
+```{r}
+# set seed to ensure reproducibility in splitting data 
+set.seed(101)
+
+# read IRT simulated data and save them into a list called cvdata
+files <- list.files("../IRT_sim/data", pattern = "^data_.*\\.csv$", full.names = TRUE)
+names(files) <- basename(files)    
+
+# irt_data is a list of 120 data frames
+irt_data <- lapply(files, read.csv)
+length(irt_data)
+
+# generate cvdata using split_data function
+cvdata_irt <- lapply(irt_data, split_data, kfold = 5)
+
+# access data name for each data
+names(cvdata_irt)[[1]]
+```
+
+## Apply cv_fit_cdm function to IRT data
+```{r, message=FALSE}
+# ~ 7 minutes
+set.seed(101)
+
+simple_dim3 <- grep("Simple.*dim3", names(cvdata_irt), value = TRUE)
+res_simple_dim3 <- mapply(run_cv_fit, cvobj = cvdata_irt[simple_dim3], name = simple_dim3, SIMPLIFY = FALSE)
+
+simple_dim5 <- grep("Simple.*dim5", names(cvdata_irt), value = TRUE)
+res_simple_dim5 <- mapply(run_cv_fit, cvobj = cvdata_irt[simple_dim5], name = simple_dim5, SIMPLIFY = FALSE)
+
+complex_dim3 <- grep("Complex.*dim3", names(cvdata_irt), value = TRUE)
+res_complex_dim3 <- mapply(run_cv_fit, cvobj = cvdata_irt[complex_dim3], name = complex_dim3, SIMPLIFY = FALSE)
+
+complex_dim5 <- grep("Complex.*dim5", names(cvdata_irt), value = TRUE)
+res_complex_dim5 <- mapply(run_cv_fit, cvobj = cvdata_irt[complex_dim5], name = complex_dim5, SIMPLIFY = FALSE)
+```
+
+```{r}
+res_all <- c(res_simple_dim3, res_simple_dim5, res_complex_dim3, res_complex_dim5)
+
+# dimension of metrics_all is 120 * 13, 12 conditions each have 10 replications
+metrics_all_irt <- lapply(names(res_all), function(name) {
+  res <- res_all[[name]]
+  data.frame(
+    structure = ifelse(str_detect(name, "Simple"), "Simple", "Complex"),
+    correlation = as.numeric(str_extract(name, "(?<=cor)\\d+(\\.\\d+)?")),
+    dim = as.numeric(str_extract(name, "(?<=dim)\\d+")),
+    replicate = as.numeric(str_extract(name, "(?<=rep)\\d+")),
+    accuracy = res$metrics$accuracy[6],
+    precision = res$metrics$precision[6],
+    recall  = res$metrics$recall[6],
+    specificity  = res$metrics$specificity[6],
+    f1_score  = res$metrics$f1_score[6],
+    mcc = res$metrics$mcc[6],
+    auc  = res$metrics$auc[6],
+    pr_auc = res$metrics$pr_auc[6],
+    log_loss  = res$metrics$log_loss[6]
+  )
+}) %>%
+  bind_rows()
+
+# group by str, cor, and dim to get summarized metrics of 12 conditions
+metrics_all_irt %>%
+  group_by(structure, correlation, dim) %>%
+  summarize(
+    mean_accuracy = mean(accuracy),
+    mean_precision = mean(precision),
+    mean_recall = mean(recall),
+    mean_specificity = mean(specificity),
+    mean_f1_score = mean(f1_score),
+    mean_mcc = mean(mcc),
+    mean_auc = mean(auc),
+    mean_pr_auc = mean(pr_auc),
+    mean_log_loss = mean(log_loss),
+    .groups = "drop"
+    )
+```
+
+
+Single try-out
 ```{r, message=FALSE}
 set.seed(101)
 Q_complex_3 <- matrix(c(
@@ -314,35 +472,42 @@ Q_complex_3 <- matrix(c(
 # cv1$metrics$accuracy[6]
 
 res <- list()
-for (i in 1:10){
-  res[[i]] <- cv_fit_cdm(cvdata[[i]], Q_complex_3)
-}
-
+res <- lapply(1:10, function(i) cv_fit_cdm(cvdata_cdm[[i]], Q_complex_3))
 acc_try <- sapply(res, function(x) x$metrics$accuracy[6])
+precision_try <- sapply(res, function(x) x$metrics$precision[6])
 
 # get average of 10 replication
 mean_acc_try <- mean(acc_try)
-
-acc_try
-mean_acc_try
-
-# print the TP/TN/FP/FN results
-# cat("\nTP=",tp," TN=",tn," FP=",fp,"FN=",fn)
+mean_precision_try <- mean(precision_try)
 ```
 
+```{r}
+#res[[1]]$metrics
+```
+
+```{r}
+acc_try
+mean_acc_try
+precision_try
+mean_precision_try
+# accessing results for the second data
+# res[[2]]
+```
+
+# Practice
+To understand and try code above
 ```{r}
 set.seed(1000)
 
 dat <- sim10GDINA$simdat
 Q <- sim10GDINA$simQ
 
-#--------GDINA model --------#
-
 mod1 <- GDINA(dat = dat, Q = Q, model = "LLM")
 #mod1
 
 head(dat)
 dim(dat) # 1000 rows, 10 columns
+
 # binary mastery profile
 # head(personparm(mod1))
 
@@ -383,22 +548,64 @@ head(pred.Y)
 ```
 
 ```{r}
-Q[2,] # qj
+Q[10,] # qj
 
-head(pp[,Q[2,]]) # can be wrong for items require multiple attributes, or require attributes other than A1
+#head(pp[,Q[2,]]) # can be wrong for items require multiple attributes, or require attributes other than A1
 
-which(Q[2,] == 1) # return the correct attribute number required for item 2
-head(pp[,which(Q[2,] == 1)]) # correct --> pp[, which(qj == 1)]
+#which(Q[2,] == 1) # return the correct attribute number required for item 2
+head(pp[,which(Q[2,] == 1), drop=FALSE]) # correct --> pp[, which(qj == 1)]
 
-head(cbind(1,pp[,which(Q[2,] == 1)])) # add 1 as a column 
+head(cbind(1,pp[,which(Q[2,] == 1), drop=FALSE])) # add 1 as a column 
 
-ip[[2]]
+#ip[[2]]
 ```
+
 ```{r}
 dim(matrix(runif(N * J), nrow = N, ncol = J))
 ```
 
+```{r, message=FALSE}
+N <- nrow(cvdata[[1]]$rawdata)
+J <- ncol(cvdata[[1]]$rawdata)
+K <- ncol(Q_complex_3)
+ind <- cvdata[[1]]$cvfold
 
+metrics <- fit <- obs_pred_p <- train_metrics <- train_obs_pred_p <- list()
+for(n in 1:cvdata[[1]]$kfold){
+    nfold.loc <- which(ind==n)
+    train.loc <- which(ind!=n)
+    nfold.length <- length(nfold.loc)
+    train.length <- length(train.loc)
+    
+    # Fit model
+    fit[[n]] <- GDINA(cvdata[[1]]$cvdata[[n]], Q_complex_3, model = "LLM", verbose = 0)
+
+    # Validation sample metrics
+    person_parm <- personparm(fit[[n]], what = "mp")
+    item_parm <- coef(fit[[n]], what = "delta")
+    pred_p <- NULL
+    
+    for (j in 1:J) {
+      qj <- Q_complex_3[j, ]
+      pred_p <- cbind(pred_p, plogis(cbind(1, person_parm[, which(qj == 1), drop = FALSE]) %*% item_parm[[j]]))
+    }
+    
+    pred_Y <- 1 * (pred_p > matrix(runif(N * J), nrow = N, ncol = J))
+    
+    p <- pred_p[nfold.loc]
+    pred.data <- pred_Y[nfold.loc]
+    
+    obs.data <- cvdata[[1]]$rawdata[nfold.loc]
+    opp <- data.frame(obs.data, pred.data, p)
+    obs_pred_p[[n]] <- opp[complete.cases(opp),]
+    metrics[[n]] <- classification_metrics(obs_pred_p[[n]]$obs.data, obs_pred_p[[n]]$pred.data, obs_pred_p[[n]]$p)
+}
+```
+
+```{r}
+obs_pred_p[[1]]
+metrics[[1]]
+```
 
 
 
