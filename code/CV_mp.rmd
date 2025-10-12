@@ -75,7 +75,7 @@ split_data <- function(data,kfold=5,prop=NULL){
 
 # Cross Validated Congitive Diagnostic Model Fitting
 ```{r}
-cv_fit_cdm <- function(cvdata, Q, estimator="mp", ...){
+cv_fit_cdm_mp <- function(cvdata, Q, estimator="mp", ...){
   N <- nrow(cvdata$rawdata)
   J <- ncol(cvdata$rawdata)
   K <- ncol(Q)
@@ -146,6 +146,110 @@ cv_fit_cdm <- function(cvdata, Q, estimator="mp", ...){
 ```
 
 ```{r}
+cv_fit_cdm_attr <- function(cvdata,Q,estimator="MAP",...){
+  N <- nrow(cvdata$rawdata)
+  J <- ncol(cvdata$rawdata)
+  K <- ncol(Q)
+  ind <- cvdata$cvfold
+
+  metrics <- fit <- obs_pred_p <- train_metrics <- train_obs_pred_p <- list()
+  for(n in 1:cvdata$kfold){
+    nfold.loc <- which(ind==n)
+    train.loc <- which(ind!=n)
+    nfold.length <- length(nfold.loc)
+    train.length <- length(train.loc)
+
+    # Fit model
+    fit[[n]] <- GDINA(cvdata$cvdata[[n]],Q,...)
+
+    # Validation sample metrics
+    profiles <- as.matrix(personparm(fit[[n]],what=estimator)[,1:K])
+    gr <- GDINA:::matchMatrix(as.matrix(attributepattern(K)),profiles)
+    cdmp <- t(fit[[n]]$LC.prob[,gr])
+    p <- cdmp[nfold.loc]
+    pred.data <- rbinom(nfold.length,1,p)
+    obs.data <- cvdata$rawdata[nfold.loc]
+    opp <- data.frame(obs.data,pred.data,p)
+    obs_pred_p[[n]] <- opp[complete.cases(opp),]
+    metrics[[n]] <- classification_metrics(obs_pred_p[[n]]$obs.data,obs_pred_p[[n]]$pred.data,obs_pred_p[[n]]$p)
+
+    # Training sample metrics
+    train_p <- cdmp[train.loc]
+    train_pred.data <- rbinom(train.length,1,train_p)
+    train_obs.data <- cvdata$rawdata[train.loc]
+    train_opp <- data.frame(train_obs.data,train_pred.data,train_p)
+    train_obs_pred_p[[n]] <- train_opp[complete.cases(train_opp),]
+    train_metrics[[n]] <- classification_metrics(train_obs_pred_p[[n]]$train_obs.data,train_obs_pred_p[[n]]$train_pred.data,train_obs_pred_p[[n]]$train_p)
+  }
+
+  output <- combine_metrics_table(metrics)
+  train_output <- combine_metrics_table(train_metrics)
+
+  list(
+    metrics = output,
+    obs_pred_p = obs_pred_p,
+    metrics_kfold = metrics,
+    train_metrics = train_output,
+    train_obs_pred_p = train_obs_pred_p,
+    train_metrics_kfold = train_metrics
+  )
+}
+```
+
+```{r}
+cv_fit_irt <- function(cvdata, model_specification, estimator="MAP",...){
+  N <- nrow(cvdata$rawdata)
+  J <- ncol(cvdata$rawdata)
+  ind <- cvdata$cvfold
+
+  metrics <- fit <- obs_pred_p <- train_metrics <- train_obs_pred_p <- list()
+  for(n in 1:cvdata$kfold){
+    p <- matrix(NA,N,J)
+    kfold.loc <- which(ind==n)
+    train.loc <- which(ind!=n)
+    kfold.length <- length(kfold.loc)
+    train.length <- length(train.loc)
+    
+    # Fit model
+    fit[[n]] <- mirt::mirt(cvdata$cvdata[[n]], model = model_specification, method = "MHRM", ...)
+    
+    # Validation sample metrics
+    theta <- mirt::fscores(fit[[n]],method=estimator, QMC = TRUE)
+    for(j in 1:J){
+      p[,j] <- mirt::expected.item(mirt::extract.item(fit[[n]],item = j),theta)
+    }
+    vp <- p[kfold.loc]
+    pred.data <- rbinom(kfold.length,1,vp)
+    obs.data <- cvdata$rawdata[kfold.loc]
+    opp <- data.frame(obs.data,pred.data,vp)
+    obs_pred_p[[n]] <- opp[complete.cases(opp),]
+    metrics[[n]] <- classification_metrics(obs_pred_p[[n]]$obs.data,obs_pred_p[[n]]$pred.data,obs_pred_p[[n]]$vp)
+    
+    # Training sample metrics
+    
+    train_p <- p[train.loc]
+    train_pred.data <- rbinom(train.length,1,train_p)
+    train_obs.data <- cvdata$rawdata[train.loc]
+    train_opp <- data.frame(train_obs.data,train_pred.data,train_p)
+    train_obs_pred_p[[n]] <- train_opp[complete.cases(train_opp),]
+    train_metrics[[n]] <- classification_metrics(train_obs_pred_p[[n]]$train_obs.data,train_obs_pred_p[[n]]$train_pred.data,train_obs_pred_p[[n]]$train_p)
+  }
+
+  output <- combine_metrics_table(metrics)
+  train_output <- combine_metrics_table(train_metrics)
+  
+  list(
+    metrics = output,
+    obs_pred_p = obs_pred_p,
+    metrics_kfold = metrics,
+    train_metrics = train_output,
+    train_obs_pred_p = train_obs_pred_p,
+    train_metrics_kfold = train_metrics
+  )
+}
+```
+
+```{r}
 classification_metrics <- function(observed, predicted, p) {
   # Ensure input vectors are numeric
   observed <- as.numeric(as.character(observed))
@@ -182,8 +286,10 @@ classification_metrics <- function(observed, predicted, p) {
 
   # PR AUC
   pr_auc_val <- tryCatch({
-    fg <- p[observed == 1]
-    bg <- p[observed == 0]
+    fg <- p[observed == 1] # foreground
+    bg <- p[observed == 0] # background
+    # class0 belongs to the positive class -> observed == 1 -> fg
+    # class1 belongs to the negative class -> observed == 0 -> bg
     pr <- PRROC::pr.curve(scores.class0 = fg, scores.class1 = bg)
     pr$auc.integral
   }, error = function(e) NA)
@@ -240,13 +346,78 @@ combine_metrics_table <- function(metrics_list,digits=3) {
 }
 ```
 
+## Define a function to run cross validation
+```{r}
+Q_complex_3 <- matrix(c(
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,1,1, 1,1,1, 1,1,1,
+            1,1,1, 1,1,1, 1,1,1
+        ), ncol = 3, byrow = TRUE)
 
-## Apply split_data function to get CDM cvdata
+# for complex structure: function to align model specification to Q-matrix
+to_model_string <- function(Q){
+  factors <- lapply(seq_len(ncol(Q)), function(f){
+    items <- which(Q[, f] == 1)
+    paste0("F", f, " = ", paste(items, collapse = ","))
+  })
+  cov <- paste0("COV = ", paste0("F", 1:ncol(Q), collapse = "*"))
+  paste(c(factors, cov), collapse = "\n")
+}
+
+# define Q-matrix for different conditions and then run cv_fit functions
+run_cv_fit <- function(cvobj, name) {
+  str <- if (grepl("Simple", name)) "Simple" else "Complex"
+  nd <- as.numeric(sub(".*dim([0-9]+)_.*", "\\1", name))
+  
+  if (str == "Simple") {
+    block_size <- 30 / nd
+    Q <- matrix(0, nrow = 30, ncol = nd)
+    for (i in 1:nd) {
+      start_index <- (i - 1) * block_size + 1
+      end_index <- i * block_size
+      Q[start_index:end_index, i] <- 1
+    }
+    factor_lines <- vapply(1:nd, function(i){
+      start_index <- (i - 1) * block_size + 1
+      end_index <- i * block_size
+      paste0("F", i, " = ", paste(start_index:end_index, collapse = ","))
+    }, character(1))
+    cov_line <- paste0("COV = ", paste0("F", 1:nd, collapse = "*"))
+    model_specification <- paste(c(factor_lines, cov_line), collapse = "\n")
+    
+  } else if (str == "Complex" & nd == 3) {
+    Q <- Q_complex_3
+    model_specification <- to_model_string(Q)
+    
+  } else if (str == "Complex" & nd == 5) {
+    Q <- sim30GDINA$simQ
+    model_specification <- to_model_string(Q)
+  }
+  
+  res_mp <- cv_fit_cdm_mp(cvobj, Q, model = "LLM")
+  res_attribute <- cv_fit_cdm_attr(cvobj, Q, model = "LLM")
+  res_irt <- cv_fit_irt(cvobj, model_specification)
+  
+  return(list(
+    mp = res_mp, 
+    attribute = res_attribute, 
+    irt = res_irt))
+}
+```
+
+# Apply split_data function to get CDM cvdata
 ```{r}
 # set seed to ensure reproducibility in splitting data 
 set.seed(101)
 
-# read CDM simulated data and save them into a list called cvdata
+# read CDM simulated data and save them into a list called cvdata_cdm
 files <- list.files("../CDM_sim/data", pattern = "^data_.*\\.csv$", full.names = TRUE)
 names(files) <- basename(files)    
 
@@ -275,80 +446,119 @@ length(nfold.loc)
 length(train.loc)
 ```
 
-## Apply cv_fit_cdm function to CDM data
-```{r}
-# define Q-matrix for different conditions and then run cv_fit_cdm
-run_cv_fit <- function(cvobj, name){
-  str <- if (grepl("Simple", name)) "Simple" else "Complex"
-  nd <- as.numeric(sub(".*dim([0-9]+)_.*", "\\1", name))
-  
-   if (str == "Simple") {
-    block_size <- 30 / nd
-    Q <- matrix(0, nrow = 30, ncol = nd)
-    for (i in 1:nd) {
-      start_index <- (i - 1) * block_size + 1
-      end_index <- i * block_size
-      Q[start_index:end_index, i] <- 1
-    }
-  } else if (str == "Complex" & nd == 3) {
-    Q <- Q_complex_3
-  } else if (str == "Complex" & nd == 5) {
-    Q <- sim30GDINA$simQ
-  }
-  
-  res <- cv_fit_cdm(cvobj, Q, model = "LLM")
-  return(res)
-}
-```
-
+# Apply run_cv_fit function to CDM data
 ```{r, message=FALSE}
-# ~ 5 minutes
-set.seed(101)
+# ~ 8 hours
+# set.seed(101)
+# 
+# simple_dim3 <- grep("Simple.*dim3", names(cvdata_cdm), value = TRUE)
+# res_simple_dim3 <- mapply(run_cv_fit, cvobj = cvdata_cdm[simple_dim3], name = simple_dim3, SIMPLIFY = FALSE)
+# 
+# simple_dim5 <- grep("Simple.*dim5", names(cvdata_cdm), value = TRUE)
+# res_simple_dim5 <- mapply(run_cv_fit, cvobj = cvdata_cdm[simple_dim5], name = simple_dim5, SIMPLIFY = FALSE)
+# 
+# complex_dim3 <- grep("Complex.*dim3", names(cvdata_cdm), value = TRUE)
+# res_complex_dim3 <- mapply(run_cv_fit, cvobj = cvdata_cdm[complex_dim3], name = complex_dim3, SIMPLIFY = FALSE)
+# 
+# complex_dim5 <- grep("Complex.*dim5", names(cvdata_cdm), value = TRUE)
+# res_complex_dim5 <- mapply(run_cv_fit, cvobj = cvdata_cdm[complex_dim5], name = complex_dim5, SIMPLIFY = FALSE)
+```
 
-simple_dim3 <- grep("Simple.*dim3", names(cvdata_cdm), value = TRUE)
-res_simple_dim3 <- mapply(run_cv_fit, cvobj = cvdata_cdm[simple_dim3], name = simple_dim3, SIMPLIFY = FALSE)
+Got two kinds of warning messages a lot of times:
 
-simple_dim5 <- grep("Simple.*dim5", names(cvdata_cdm), value = TRUE)
-res_simple_dim5 <- mapply(run_cv_fit, cvobj = cvdata_cdm[simple_dim5], name = simple_dim5, SIMPLIFY = FALSE)
+1) Warning: The following factor score estimates failed to converge successfully: 17,19,23,56,82,219,223,228,271,288,322,339,348,360,370,378,395,417,435,463,502,559,573,610,634,646,652,663,671,708,731,738,744,768,770,797,824,846,847,849,924,951,1004,1009,1079,1104,1146,1147,1165,1170,1173,1226,1252,1258,1268,1297,1298,1300,1301,1309,1329,1370,1373,1409,1418,1421,1466,1513,1514,1516,1558,1593,1596,1641,1661,1685,1696,1702,1720,1729,1755,1775,1789,1790,1792,1800,1802,1852,1866,1882,1894,1896,1899,1943,1975,1983,1997
 
-complex_dim3 <- grep("Complex.*dim3", names(cvdata_cdm), value = TRUE)
-res_complex_dim3 <- mapply(run_cv_fit, cvobj = cvdata_cdm[complex_dim3], name = complex_dim3, SIMPLIFY = FALSE)
+2) Warning: MHRM terminated after 2000 iterations.
 
-complex_dim5 <- grep("Complex.*dim5", names(cvdata_cdm), value = TRUE)
-res_complex_dim5 <- mapply(run_cv_fit, cvobj = cvdata_cdm[complex_dim5], name = complex_dim5, SIMPLIFY = FALSE)
+```{r}
+# ~ several minutes
+# saveRDS(res_simple_dim3, "cdm_data_res_simple_dim3.rds")
+# saveRDS(res_simple_dim5, "cdm_data_res_simple_dim5.rds")
+# saveRDS(res_complex_dim3, "cdm_data_res_complex_dim3.rds")
+# saveRDS(res_complex_dim5, "cdm_data_res_complex_dim5.rds")
 ```
 
 ```{r}
-#res_complex_dim3$data_Complex_cor0_dim3_rep10.csv$metrics
+cdm_data_res_simple_dim3 <- readRDS("cdm_data_res_simple_dim3.rds")
 ```
 
 ```{r}
-res_all <- c(res_simple_dim3, res_simple_dim5, res_complex_dim3, res_complex_dim5)
+cdm_data_res_simple_dim3$data_Simple_cor0_dim3_rep1.csv$mp$metrics
+cdm_data_res_simple_dim3$data_Simple_cor0_dim3_rep1.csv$attribute$metrics
+cdm_data_res_simple_dim3$data_Simple_cor0_dim3_rep1.csv$irt$metrics
+```
+```{r}
+cdm_data_res_simple_dim5 <- readRDS("cdm_data_res_simple_dim5.rds")
+```
 
-# dimension of metrics_all is 120 * 13, 12 conditions each have 10 replications
+```{r}
+cdm_data_res_simple_dim5$data_Simple_cor0_dim5_rep1.csv$mp$metrics
+cdm_data_res_simple_dim5$data_Simple_cor0_dim5_rep1.csv$attribute$metrics
+cdm_data_res_simple_dim5$data_Simple_cor0_dim5_rep1.csv$irt$metrics
+```
+
+```{r}
+cdm_data_res_complex_dim3 <- readRDS("cdm_data_res_complex_dim3.rds")
+```
+
+```{r}
+cdm_data_res_complex_dim3$data_Complex_cor0_dim3_rep1.csv$mp$metrics
+cdm_data_res_complex_dim3$data_Complex_cor0_dim3_rep1.csv$attribute$metrics
+cdm_data_res_complex_dim3$data_Complex_cor0_dim3_rep1.csv$irt$metrics
+```
+
+```{r}
+cdm_data_res_complex_dim5 <- readRDS("cdm_data_res_complex_dim5.rds")
+```
+
+```{r}
+cdm_data_res_complex_dim5$data_Complex_cor0_dim5_rep1.csv$mp$metrics
+cdm_data_res_complex_dim5$data_Complex_cor0_dim5_rep1.csv$attribute$metrics
+cdm_data_res_complex_dim5$data_Complex_cor0_dim5_rep1.csv$irt$metrics
+```
+
+```{r}
+# get aggregated results
+res_all <- c(cdm_data_res_simple_dim3, cdm_data_res_simple_dim5, cdm_data_res_complex_dim3, cdm_data_res_complex_dim5)
+
+# dimension of metrics_all_cdm is 120 * 3 rows and 14 columns
+# 12 conditions of each 3 methods each have 10 replications
 metrics_all_cdm <- lapply(names(res_all), function(name) {
   res <- res_all[[name]]
-  data.frame(
-    structure = ifelse(str_detect(name, "Simple"), "Simple", "Complex"),
-    correlation = as.numeric(str_extract(name, "(?<=cor)\\d+(\\.\\d+)?")),
-    dim = as.numeric(str_extract(name, "(?<=dim)\\d+")),
-    replicate = as.numeric(str_extract(name, "(?<=rep)\\d+")),
-    accuracy = res$metrics$accuracy[6],
-    precision = res$metrics$precision[6],
-    recall  = res$metrics$recall[6],
-    specificity  = res$metrics$specificity[6],
-    f1_score  = res$metrics$f1_score[6],
-    mcc = res$metrics$mcc[6],
-    auc  = res$metrics$auc[6],
-    pr_auc = res$metrics$pr_auc[6],
-    log_loss  = res$metrics$log_loss[6]
-  )
+  
+  structure <- ifelse(str_detect(name, "Simple"), "Simple", "Complex")
+  correlation <- as.numeric(str_extract(name, "(?<=cor)\\d+(\\.\\d+)?"))
+  dim <- as.numeric(str_extract(name, "(?<=dim)\\d+"))
+  replicate <- as.numeric(str_extract(name, "(?<=rep)\\d+"))
+  
+  methods <- c("mp", "attribute", "irt")
+  
+  bind_rows(lapply(methods, function(m) {
+    data.frame(
+      method = m,
+      structure = structure,
+      correlation = correlation,
+      dim = dim,
+      replicate = replicate,
+      accuracy = res[[m]]$metrics$accuracy[6],
+      precision = res[[m]]$metrics$precision[6],
+      recall  = res[[m]]$metrics$recall[6],
+      specificity  = res[[m]]$metrics$specificity[6],
+      f1_score  = res[[m]]$metrics$f1_score[6],
+      mcc = res[[m]]$metrics$mcc[6],
+      auc  = res[[m]]$metrics$auc[6],
+      pr_auc = res[[m]]$metrics$pr_auc[6],
+      log_loss  = res[[m]]$metrics$log_loss[6]
+    )
+  }))
 }) %>%
   bind_rows()
 
-# group by str, cor, and dim to get summarized metrics of 12 conditions
+# group by str, cor, dim, and methods to get summarized metrics of 12 conditions
 metrics_all_cdm %>%
-  group_by(structure, correlation, dim) %>%
+  # keep the order of three methods fixed like this
+  mutate(method = factor(method, levels = c("mp", "attribute", "irt"))) %>% 
+  group_by(structure, correlation, dim, method) %>%
   summarize(
     mean_accuracy = mean(accuracy),
     mean_precision = mean(precision),
@@ -360,24 +570,26 @@ metrics_all_cdm %>%
     mean_pr_auc = mean(pr_auc),
     mean_log_loss = mean(log_loss),
     .groups = "drop"
-    )
+    ) %>%
+  arrange(structure, correlation, dim, method)
 ```
 
 ```{r}
-res_all[["data_Complex_cor0_dim3_rep1.csv"]]
-res_all[["data_Complex_cor0_dim3_rep1.csv"]]$metrics$accuracy[6]
-res_all[["data_Complex_cor0_dim3_rep1.csv"]]$metrics$precision[6]
-```
-```{r}
-metrics_all_cdm
+# metrics_all_cdm
+# names(res_all)
+# access the individual data 
+res_all[["data_Simple_cor0_dim3_rep1.csv"]]$mp$metrics$accuracy[6]
+res_all[["data_Simple_cor0_dim5_rep1.csv"]]$mp$metrics$accuracy[6]
+res_all[["data_Complex_cor0_dim3_rep1.csv"]]$mp$metrics$accuracy[6]
+res_all[["data_Complex_cor0_dim5_rep1.csv"]]$mp$metrics$accuracy[6]
 ```
 
-## Apply split_data function to get IRT cvdata
+# Apply split_data function to get IRT cvdata
 ```{r}
 # set seed to ensure reproducibility in splitting data 
 set.seed(101)
 
-# read IRT simulated data and save them into a list called cvdata
+# read IRT simulated data and save them into a list called cvdata_irt
 files <- list.files("../IRT_sim/data", pattern = "^data_.*\\.csv$", full.names = TRUE)
 names(files) <- basename(files)    
 
@@ -392,51 +604,113 @@ cvdata_irt <- lapply(irt_data, split_data, kfold = 5)
 names(cvdata_irt)[[1]]
 ```
 
-## Apply cv_fit_cdm function to IRT data
+# Apply run_cv_fit function to IRT data
 ```{r, message=FALSE}
-# ~ 7 minutes
 set.seed(101)
 
-simple_dim3 <- grep("Simple.*dim3", names(cvdata_irt), value = TRUE)
-res_simple_dim3 <- mapply(run_cv_fit, cvobj = cvdata_irt[simple_dim3], name = simple_dim3, SIMPLIFY = FALSE)
+# simple_dim3 <- grep("Simple.*dim3", names(cvdata_irt), value = TRUE)
+# res_simple_dim3 <- mapply(run_cv_fit, cvobj = cvdata_irt[simple_dim3], name = simple_dim3, SIMPLIFY = FALSE)
+# 
+# simple_dim5 <- grep("Simple.*dim5", names(cvdata_irt), value = TRUE)
+# res_simple_dim5 <- mapply(run_cv_fit, cvobj = cvdata_irt[simple_dim5], name = simple_dim5, SIMPLIFY = FALSE)
 
-simple_dim5 <- grep("Simple.*dim5", names(cvdata_irt), value = TRUE)
-res_simple_dim5 <- mapply(run_cv_fit, cvobj = cvdata_irt[simple_dim5], name = simple_dim5, SIMPLIFY = FALSE)
-
-complex_dim3 <- grep("Complex.*dim3", names(cvdata_irt), value = TRUE)
-res_complex_dim3 <- mapply(run_cv_fit, cvobj = cvdata_irt[complex_dim3], name = complex_dim3, SIMPLIFY = FALSE)
-
-complex_dim5 <- grep("Complex.*dim5", names(cvdata_irt), value = TRUE)
-res_complex_dim5 <- mapply(run_cv_fit, cvobj = cvdata_irt[complex_dim5], name = complex_dim5, SIMPLIFY = FALSE)
+# complex_dim3 <- grep("Complex.*dim3", names(cvdata_irt), value = TRUE)
+# res_complex_dim3 <- mapply(run_cv_fit, cvobj = cvdata_irt[complex_dim3], name = complex_dim3, SIMPLIFY = FALSE)
+# 
+# complex_dim5 <- grep("Complex.*dim5", names(cvdata_irt), value = TRUE)
+# res_complex_dim5 <- mapply(run_cv_fit, cvobj = cvdata_irt[complex_dim5], name = complex_dim5, SIMPLIFY = FALSE)
 ```
 
 ```{r}
-res_all <- c(res_simple_dim3, res_simple_dim5, res_complex_dim3, res_complex_dim5)
+# ~ several minutes
+# saveRDS(res_simple_dim3, "irt_data_res_simple_dim3.rds")
+# saveRDS(res_simple_dim5, "irt_data_res_simple_dim5.rds")
+# saveRDS(res_complex_dim3, "irt_data_res_complex_dim3.rds")
+# saveRDS(res_complex_dim5, "irt_data_res_complex_dim5.rds")
+```
 
-# dimension of metrics_all is 120 * 13, 12 conditions each have 10 replications
+```{r}
+irt_data_res_simple_dim3 <- readRDS("irt_data_res_simple_dim3.rds")
+```
+
+```{r}
+irt_data_res_simple_dim3$data_Simple_cor0_dim3_rep1.csv$mp$metrics
+irt_data_res_simple_dim3$data_Simple_cor0_dim3_rep1.csv$attribute$metrics
+irt_data_res_simple_dim3$data_Simple_cor0_dim3_rep1.csv$irt$metrics
+```
+
+```{r}
+irt_data_res_simple_dim5 <- readRDS("irt_data_res_simple_dim5.rds")
+```
+
+```{r}
+irt_data_res_simple_dim5$data_Simple_cor0_dim5_rep1.csv$mp$metrics
+irt_data_res_simple_dim5$data_Simple_cor0_dim5_rep1.csv$attribute$metrics
+irt_data_res_simple_dim5$data_Simple_cor0_dim5_rep1.csv$irt$metrics
+```
+
+```{r}
+irt_data_res_complex_dim3 <- readRDS("irt_data_res_complex_dim3.rds")
+```
+
+```{r}
+irt_data_res_complex_dim3$data_Complex_cor0_dim3_rep1.csv$mp$metrics
+irt_data_res_complex_dim3$data_Complex_cor0_dim3_rep1.csv$attribute$metrics
+irt_data_res_complex_dim3$data_Complex_cor0_dim3_rep1.csv$irt$metrics
+```
+
+```{r}
+irt_data_res_complex_dim5 <- readRDS("irt_data_res_complex_dim5.rds")
+```
+
+```{r}
+irt_data_res_complex_dim5$data_Complex_cor0_dim5_rep1.csv$mp$metrics
+irt_data_res_complex_dim5$data_Complex_cor0_dim5_rep1.csv$attribute$metrics
+irt_data_res_complex_dim5$data_Complex_cor0_dim5_rep1.csv$irt$metrics
+```
+
+```{r}
+# get aggregated results
+res_all <- c(irt_data_res_simple_dim3, irt_data_res_simple_dim5, irt_data_res_complex_dim3, irt_data_res_complex_dim5)
+
+# dimension of metrics_all_cdm is 120 * 3 rows and 14 columns
+# 12 conditions of each 3 methods each have 10 replications
 metrics_all_irt <- lapply(names(res_all), function(name) {
   res <- res_all[[name]]
-  data.frame(
-    structure = ifelse(str_detect(name, "Simple"), "Simple", "Complex"),
-    correlation = as.numeric(str_extract(name, "(?<=cor)\\d+(\\.\\d+)?")),
-    dim = as.numeric(str_extract(name, "(?<=dim)\\d+")),
-    replicate = as.numeric(str_extract(name, "(?<=rep)\\d+")),
-    accuracy = res$metrics$accuracy[6],
-    precision = res$metrics$precision[6],
-    recall  = res$metrics$recall[6],
-    specificity  = res$metrics$specificity[6],
-    f1_score  = res$metrics$f1_score[6],
-    mcc = res$metrics$mcc[6],
-    auc  = res$metrics$auc[6],
-    pr_auc = res$metrics$pr_auc[6],
-    log_loss  = res$metrics$log_loss[6]
-  )
+  
+  structure <- ifelse(str_detect(name, "Simple"), "Simple", "Complex")
+  correlation <- as.numeric(str_extract(name, "(?<=cor)\\d+(\\.\\d+)?"))
+  dim <- as.numeric(str_extract(name, "(?<=dim)\\d+"))
+  replicate <- as.numeric(str_extract(name, "(?<=rep)\\d+"))
+  
+  methods <- c("mp", "attribute", "irt")
+  
+  bind_rows(lapply(methods, function(m) {
+    data.frame(
+      method = m,
+      structure = structure,
+      correlation = correlation,
+      dim = dim,
+      replicate = replicate,
+      accuracy = res[[m]]$metrics$accuracy[6],
+      precision = res[[m]]$metrics$precision[6],
+      recall  = res[[m]]$metrics$recall[6],
+      specificity  = res[[m]]$metrics$specificity[6],
+      f1_score  = res[[m]]$metrics$f1_score[6],
+      mcc = res[[m]]$metrics$mcc[6],
+      auc  = res[[m]]$metrics$auc[6],
+      pr_auc = res[[m]]$metrics$pr_auc[6],
+      log_loss  = res[[m]]$metrics$log_loss[6]
+    )
+  }))
 }) %>%
   bind_rows()
 
-# group by str, cor, and dim to get summarized metrics of 12 conditions
+# group by str, cor, dim, and methods to get summarized metrics of 12 conditions
 metrics_all_irt %>%
-  group_by(structure, correlation, dim) %>%
+  # keep the order of three methods fixed like this
+  mutate(method = factor(method, levels = c("mp", "attribute", "irt"))) %>% 
+  group_by(structure, correlation, dim, method) %>%
   summarize(
     mean_accuracy = mean(accuracy),
     mean_precision = mean(precision),
@@ -448,10 +722,12 @@ metrics_all_irt %>%
     mean_pr_auc = mean(pr_auc),
     mean_log_loss = mean(log_loss),
     .groups = "drop"
-    )
+    ) %>%
+  arrange(structure, correlation, dim, method)
 ```
 
 
+# Practice Section
 Single try-out
 ```{r, message=FALSE}
 set.seed(101)
@@ -494,7 +770,7 @@ mean_precision_try
 # res[[2]]
 ```
 
-# Practice
+
 To understand and try code above
 ```{r}
 set.seed(1000)
