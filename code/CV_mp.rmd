@@ -371,7 +371,7 @@ to_model_string <- function(Q){
   paste(c(factors, cov), collapse = "\n")
 }
 
-# define Q-matrix for different conditions and then run cv_fit functions
+# define Q-matrix for different conditions and then run_cv_fit functions
 run_cv_fit <- function(cvobj, name) {
   str <- if (grepl("Simple", name)) "Simple" else "Complex"
   nd <- as.numeric(sub(".*dim([0-9]+)_.*", "\\1", name))
