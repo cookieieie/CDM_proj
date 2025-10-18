@@ -13,6 +13,7 @@ library(GDINA)
 library(mirt)
 library(mvtnorm)
 library(dplyr)
+library(tidyr)
 library(stringr)
 library(ggplot2)
 ```
@@ -92,6 +93,12 @@ cv_fit_cdm_mp <- function(cvdata, Q, estimator="mp", ...){
     fit[[n]] <- GDINA(cvdata$cvdata[[n]],Q, model = "LLM", verbose = 0)
 
     # Validation sample metrics
+    # profiles <- as.matrix(personparm(fit[[n]],what=estimator)[,1:K])
+    # gr <- GDINA:::matchMatrix(as.matrix(attributepattern(K)),profiles)
+    # cdmp <- t(fit[[n]]$LC.prob[,gr])
+    # p <- cdmp[nfold.loc]
+    # pred.data <- rbinom(nfold.length,1,p)
+    
     person_parm <- personparm(fit[[n]], what = estimator)
     item_parm <- coef(fit[[n]], what = "delta")
     pred_p <- NULL
@@ -105,12 +112,6 @@ cv_fit_cdm_mp <- function(cvdata, Q, estimator="mp", ...){
     
     p <- pred_p[nfold.loc]
     pred.data <- pred_Y[nfold.loc]
-    
-    # profiles <- as.matrix(personparm(fit[[n]],what=estimator)[,1:K])
-    # gr <- GDINA:::matchMatrix(as.matrix(attributepattern(K)),profiles)
-    # cdmp <- t(fit[[n]]$LC.prob[,gr])
-    # p <- cdmp[nfold.loc]
-    # pred.data <- rbinom(nfold.length,1,p)
     
     obs.data <- cvdata$rawdata[nfold.loc]
     opp <- data.frame(obs.data, pred.data, p)
@@ -472,14 +473,14 @@ Got two kinds of warning messages a lot of times:
 
 ```{r}
 # ~ several minutes
-# saveRDS(res_simple_dim3, "cdm_data_res_simple_dim3.rds")
-# saveRDS(res_simple_dim5, "cdm_data_res_simple_dim5.rds")
-# saveRDS(res_complex_dim3, "cdm_data_res_complex_dim3.rds")
-# saveRDS(res_complex_dim5, "cdm_data_res_complex_dim5.rds")
+# saveRDS(res_simple_dim3, "../CV_results/cdm_data_res_simple_dim3.rds")
+# saveRDS(res_simple_dim5, "../CV_results/cdm_data_res_simple_dim5.rds")
+# saveRDS(res_complex_dim3, "../CV_results/cdm_data_res_complex_dim3.rds")
+# saveRDS(res_complex_dim5, "../CV_results/cdm_data_res_complex_dim5.rds")
 ```
 
 ```{r}
-cdm_data_res_simple_dim3 <- readRDS("cdm_data_res_simple_dim3.rds")
+cdm_data_res_simple_dim3 <- readRDS("../CV_results/cdm_data_res_simple_dim3.rds")
 ```
 
 ```{r}
@@ -488,7 +489,7 @@ cdm_data_res_simple_dim3$data_Simple_cor0_dim3_rep1.csv$attribute$metrics
 cdm_data_res_simple_dim3$data_Simple_cor0_dim3_rep1.csv$irt$metrics
 ```
 ```{r}
-cdm_data_res_simple_dim5 <- readRDS("cdm_data_res_simple_dim5.rds")
+cdm_data_res_simple_dim5 <- readRDS("../CV_results/cdm_data_res_simple_dim5.rds")
 ```
 
 ```{r}
@@ -498,7 +499,7 @@ cdm_data_res_simple_dim5$data_Simple_cor0_dim5_rep1.csv$irt$metrics
 ```
 
 ```{r}
-cdm_data_res_complex_dim3 <- readRDS("cdm_data_res_complex_dim3.rds")
+cdm_data_res_complex_dim3 <- readRDS("../CV_results/cdm_data_res_complex_dim3.rds")
 ```
 
 ```{r}
@@ -508,7 +509,7 @@ cdm_data_res_complex_dim3$data_Complex_cor0_dim3_rep1.csv$irt$metrics
 ```
 
 ```{r}
-cdm_data_res_complex_dim5 <- readRDS("cdm_data_res_complex_dim5.rds")
+cdm_data_res_complex_dim5 <- readRDS("../CV_results/cdm_data_res_complex_dim5.rds")
 ```
 
 ```{r}
@@ -555,7 +556,7 @@ metrics_all_cdm <- lapply(names(res_all), function(name) {
   bind_rows()
 
 # group by str, cor, dim, and methods to get summarized metrics of 12 conditions
-metrics_all_cdm %>%
+metrics_all_cdm <- metrics_all_cdm %>%
   # keep the order of three methods fixed like this
   mutate(method = factor(method, levels = c("mp", "attribute", "irt"))) %>% 
   group_by(structure, correlation, dim, method) %>%
@@ -572,6 +573,11 @@ metrics_all_cdm %>%
     .groups = "drop"
     ) %>%
   arrange(structure, correlation, dim, method)
+```
+
+```{r}
+metrics_all_cdm
+write.csv(metrics_all_cdm, "../CV_results/metrics_results_cdm.csv", row.names = FALSE)
 ```
 
 ```{r}
@@ -623,14 +629,14 @@ set.seed(101)
 
 ```{r}
 # ~ several minutes
-# saveRDS(res_simple_dim3, "irt_data_res_simple_dim3.rds")
-# saveRDS(res_simple_dim5, "irt_data_res_simple_dim5.rds")
-# saveRDS(res_complex_dim3, "irt_data_res_complex_dim3.rds")
-# saveRDS(res_complex_dim5, "irt_data_res_complex_dim5.rds")
+# saveRDS(res_simple_dim3, "../CV_results/irt_data_res_simple_dim3.rds")
+# saveRDS(res_simple_dim5, "../CV_results/irt_data_res_simple_dim5.rds")
+# saveRDS(res_complex_dim3, "../CV_results/irt_data_res_complex_dim3.rds")
+# saveRDS(res_complex_dim5, "../CV_results/irt_data_res_complex_dim5.rds")
 ```
 
 ```{r}
-irt_data_res_simple_dim3 <- readRDS("irt_data_res_simple_dim3.rds")
+irt_data_res_simple_dim3 <- readRDS("../CV_results/irt_data_res_simple_dim3.rds")
 ```
 
 ```{r}
@@ -640,7 +646,7 @@ irt_data_res_simple_dim3$data_Simple_cor0_dim3_rep1.csv$irt$metrics
 ```
 
 ```{r}
-irt_data_res_simple_dim5 <- readRDS("irt_data_res_simple_dim5.rds")
+irt_data_res_simple_dim5 <- readRDS("../CV_results/irt_data_res_simple_dim5.rds")
 ```
 
 ```{r}
@@ -650,7 +656,7 @@ irt_data_res_simple_dim5$data_Simple_cor0_dim5_rep1.csv$irt$metrics
 ```
 
 ```{r}
-irt_data_res_complex_dim3 <- readRDS("irt_data_res_complex_dim3.rds")
+irt_data_res_complex_dim3 <- readRDS("../CV_results/irt_data_res_complex_dim3.rds")
 ```
 
 ```{r}
@@ -660,7 +666,7 @@ irt_data_res_complex_dim3$data_Complex_cor0_dim3_rep1.csv$irt$metrics
 ```
 
 ```{r}
-irt_data_res_complex_dim5 <- readRDS("irt_data_res_complex_dim5.rds")
+irt_data_res_complex_dim5 <- readRDS("../CV_results/irt_data_res_complex_dim5.rds")
 ```
 
 ```{r}
@@ -707,7 +713,7 @@ metrics_all_irt <- lapply(names(res_all), function(name) {
   bind_rows()
 
 # group by str, cor, dim, and methods to get summarized metrics of 12 conditions
-metrics_all_irt %>%
+metrics_all_irt <- metrics_all_irt %>%
   # keep the order of three methods fixed like this
   mutate(method = factor(method, levels = c("mp", "attribute", "irt"))) %>% 
   group_by(structure, correlation, dim, method) %>%
@@ -724,6 +730,70 @@ metrics_all_irt %>%
     .groups = "drop"
     ) %>%
   arrange(structure, correlation, dim, method)
+```
+
+```{r}
+metrics_all_irt
+write.csv(metrics_all_irt, "../CV_results/metrics_results_irt.csv", row.names = FALSE)
+```
+
+# Single condition results interpretation
+```{r}
+cdm_data_res_complex_dim5 <- readRDS("../CV_results/cdm_data_res_complex_dim5.rds")
+```
+
+```{r}
+# str(cdm_data_res_complex_dim5_cor0.3$data_Complex_cor0.3_dim5_rep1.csv)
+# cdm_data_res_complex_dim5_cor0.3[["data_Complex_cor0.3_dim5_rep1.csv"]]$mp$metrics$accuracy[6]
+# cdm_data_res_complex_dim5_cor0.3$data_Complex_cor0.3_dim5_rep1.csv$mp$metrics$accuracy[6]
+```
+
+```{r}
+# focus on one single condition of complex structure, dim of 5 and correlation of 0.3
+cdm_data_res_complex_dim5_cor0.3 <- cdm_data_res_complex_dim5[grep("cor0\\.3", names(cdm_data_res_complex_dim5))]
+
+# list all possible metrics derived from cross validation
+cv_metrics <- c("accuracy", "precision", "recall", "specificity", "f1_score", "mcc", "auc", "pr_auc", "log_loss")
+
+results_complex_dim5_cor0.3 <- list()
+
+for (i in 1:10) {
+  # construct the name of each data set
+  data_name <- paste0("data_Complex_cor0.3_dim5_rep", i, ".csv")
+  
+  # extract the list of output for each data set
+  data_i <- cdm_data_res_complex_dim5_cor0.3[[data_name]]
+  
+  # extract averaged metrics values from 5 folds by [6]
+  metrics_values <- t(sapply(cv_metrics, function(m) {
+    c(
+      mp = data_i$mp$metrics[[m]][6],
+      attribute = data_i$attribute$metrics[[m]][6],
+      theta = data_i$irt$metrics[[m]][[6]]
+    )
+  }))
+  
+  df_i <- data.frame(rep = i, metric = rownames(metrics_values), metrics_values, row.names = NULL)
+  results_complex_dim5_cor0.3[[i]] <- df_i
+}
+
+results_complex_dim5_cor0.3 <- bind_rows(results_complex_dim5_cor0.3) %>%
+  pivot_longer(cols = c(mp, attribute, theta), 
+               names_to = "method", 
+               values_to = "value") %>%
+  pivot_wider(names_from = metric, 
+              values_from = value)
+
+results_complex_dim5_cor0.3 
+```
+
+```{r}
+# should be the same results in the summary results table above -> Yes
+results_complex_dim5_cor0.3 %>%
+  group_by(method) %>%
+  summarise(across(all_of(cv_metrics), mean)) %>%
+  mutate(method = factor(method, levels = c("mp", "attribute", "theta"))) %>%
+  arrange(method)
 ```
 
 
