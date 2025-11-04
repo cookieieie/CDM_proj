@@ -312,7 +312,7 @@ classification_metrics <- function(observed, predicted, p) {
   log_loss <- {
     eps <- 1e-15
     p <- pmin(pmax(p, eps), 1 - eps)
-    mean(observed * log(p) + (1 - observed) * log(1 - p))
+    -mean(observed * log(p) + (1 - observed) * log(1 - p))
   }
 
   # Confusion matrix
@@ -677,6 +677,12 @@ irt_data_res_simple_dim5$data_Simple_cor0_dim5_rep1.csv$irt$metrics
 ```
 
 ```{r}
+# can also access train metrics, but they are not useful compared to test metrics
+# irt_data_res_complex_dim5$data_Complex_cor0_dim5_rep1.csv$mp$metrics
+# irt_data_res_complex_dim5$data_Complex_cor0_dim5_rep1.csv$mp$train_metrics
+```
+
+```{r}
 irt_data_res_complex_dim3 <- readRDS("../CV_results/irt_data_res_complex_dim3.rds")
 ```
 
@@ -758,11 +764,123 @@ metrics_all_irt
 write.csv(metrics_all_irt, "../CV_results/metrics_results_irt.csv", row.names = FALSE)
 ```
 
+
+# Access all 12 conditions from CDM & IRT to obtain three methods (mp, attribute, theta) with test set metrics (accuracy, mcc, log loss etc.) for each of 10 replications
+
+```{r}
+# cdm_data_simple_dim3 <- readRDS("../CV_results/cdm_data_res_simple_dim3.rds")
+# cdm_data_simple_dim5 <- readRDS("../CV_results/cdm_data_res_simple_dim5.rds")
+# cdm_data_complex_dim3 <- readRDS("../CV_results/cdm_data_res_complex_dim3.rds")
+# cdm_data_complex_dim5 <- readRDS("../CV_results/cdm_data_res_complex_dim5.rds")
+# 
+# irt_data_simple_dim3 <- readRDS("../CV_results/irt_data_res_simple_dim3.rds")
+# irt_data_simple_dim5 <- readRDS("../CV_results/irt_data_res_simple_dim5.rds")
+# irt_data_complex_dim3 <- readRDS("../CV_results/irt_data_res_complex_dim3.rds")
+# irt_data_complex_dim5 <- readRDS("../CV_results/irt_data_res_complex_dim5.rds")
+```
+
+```{r}
+st <- "complex"
+toupper(substr(st,1,1))
+substring(st,2)
+```
+
+```{r}
+# parameters
+# model_types <- c("cdm", "irt")
+# structures  <- c("simple", "complex")
+# dims        <- c(3, 5)
+# cors        <- c("0", "0.3", "0.6")
+# reps        <- 10
+
+model_types <- c("cdm", "irt")
+structures  <- "complex"
+dims        <- 5
+cors        <- "0.3"
+reps        <- 10
+
+# metrics to extract
+cv_metrics <- c("accuracy", "precision", "recall", "specificity",
+                "f1_score", "mcc", "auc", "pr_auc", "log_loss")
+
+all_results <- list()
+
+counter <- 1
+
+for (mt in model_types) {
+  for (st in structures) {
+    for (dm in dims) {
+      for (cr in cors) {
+        
+        # build data name, e.g. "cdm_data_complex_dim5_cor0.3"
+        obj_name <- paste0(mt, "_data_", st, "_dim", dm, "_cor", cr)
+        
+        # retrieve data name
+        data_list <- get(obj_name)
+        
+        message("Processing: ", obj_name)
+        
+        # store results across 10 reps for current dataset
+        results_config <- list()
+
+        for (i in 1:reps) {
+          
+          # build dataset name, e.g. "data_Complex_cor0.3_dim5_rep3.csv"
+          dataset_name <- paste0("data_",
+                                 toupper(substr(st,1,1)), substring(st,2), # "Complex"
+                                 "_cor", cr,
+                                 "_dim", dm,
+                                 "_rep", i, ".csv")
+          
+          # retrieve data name
+          data_i <- data_list[[dataset_name]]
+          
+          # extract averaged metrics values from 5 folds by [6]
+          metrics_values <- t(sapply(cv_metrics, function(m) {
+            c(
+              mp        = data_i$mp$metrics[[m]][6],
+              attribute = data_i$attribute$metrics[[m]][6],
+              theta     = data_i$irt$metrics[[m]][6]
+            )
+          }))
+          
+          df_i <- data.frame(
+            model_type = mt,
+            structure  = st,
+            dim        = dm,
+            correlation = cr,
+            rep        = i,
+            metric     = rownames(metrics_values),
+            metrics_values,
+            row.names = NULL
+          )
+          
+          results_config[[i]] <- df_i
+        }
+        
+        # bind 10 reps for current data set
+        all_results[[counter]] <- bind_rows(results_config)
+        counter <- counter + 1
+      }
+    }
+  }
+}
+
+# combine all results by pivoting three methods
+cv_metric_results <- bind_rows(all_results) %>%
+  pivot_longer(cols = c(mp, attribute, theta),
+               names_to = "method",
+               values_to = "value") %>%
+  pivot_wider(names_from = metric, values_from = value)
+
+cv_metric_results
+```
+
 # Single condition results interpretation
 
 CDM Data
 ```{r}
-cdm_data_res_complex_dim5 <- readRDS("../CV_results/cdm_data_res_complex_dim5.rds")
+cdm_data_complex_dim5 <- readRDS("../CV_results/cdm_data_res_complex_dim5.rds")
 ```
 
 ```{r}
@@ -773,7 +891,7 @@ cdm_data_res_complex_dim5 <- readRDS("../CV_results/cdm_data_res_complex_dim5.rd
 
 ```{r}
 # focus on one single condition of complex structure, dim of 5 and correlation of 0.3
-cdm_data_res_complex_dim5_cor0.3 <- cdm_data_res_complex_dim5[grep("cor0\\.3", names(cdm_data_res_complex_dim5))]
+cdm_data_complex_dim5_cor0.3 <- cdm_data_complex_dim5[grep("cor0\\.3", names(cdm_data_complex_dim5))]
 
 # list all possible metrics derived from cross validation
 cv_metrics <- c("accuracy", "precision", "recall", "specificity", "f1_score", "mcc", "auc", "pr_auc", "log_loss")
@@ -785,7 +903,7 @@ for (i in 1:10) {
   data_name <- paste0("data_Complex_cor0.3_dim5_rep", i, ".csv")
   
   # extract the list of output for each data set
-  data_i <- cdm_data_res_complex_dim5_cor0.3[[data_name]]
+  data_i <- cdm_data_complex_dim5_cor0.3[[data_name]]
   
   # extract averaged metrics values from 5 folds by [6]
   metrics_values <- t(sapply(cv_metrics, function(m) {
@@ -812,12 +930,12 @@ cdm_results_complex_dim5_cor0.3
 
 IRT data
 ```{r}
-irt_data_res_complex_dim5 <- readRDS("../CV_results/irt_data_res_complex_dim5.rds")
+irt_data_complex_dim5 <- readRDS("../CV_results/irt_data_res_complex_dim5.rds")
 ```
 
 ```{r}
 # focus on one single condition of complex structure, dim of 5 and correlation of 0.3
-irt_data_res_complex_dim5_cor0.3 <- irt_data_res_complex_dim5[grep("cor0\\.3", names(irt_data_res_complex_dim5))]
+irt_data_complex_dim5_cor0.3 <- irt_data_complex_dim5[grep("cor0\\.3", names(irt_data_complex_dim5))]
 
 # list all possible metrics derived from cross validation
 cv_metrics <- c("accuracy", "precision", "recall", "specificity", "f1_score", "mcc", "auc", "pr_auc", "log_loss")
@@ -829,7 +947,7 @@ for (i in 1:10) {
   data_name <- paste0("data_Complex_cor0.3_dim5_rep", i, ".csv")
   
   # extract the list of output for each data set
-  data_i <- irt_data_res_complex_dim5_cor0.3[[data_name]]
+  data_i <- irt_data_complex_dim5_cor0.3[[data_name]]
   
   # extract averaged metrics values from 5 folds by [6]
   metrics_values <- t(sapply(cv_metrics, function(m) {
@@ -862,6 +980,10 @@ irt_results_complex_dim5_cor0.3$source <- "IRT"
 
 combine_results_complex_dim5_cor0.3 <- rbind(cdm_results_complex_dim5_cor0.3, irt_results_complex_dim5_cor0.3)
 combine_results_complex_dim5_cor0.3
+```
+
+```{r}
+# write.csv(combine_results_complex_dim5_cor0.3, "combine_results_complex_dim5_cor0.3.csv", row.names = FALSE)
 ```
 
 ```{r}
