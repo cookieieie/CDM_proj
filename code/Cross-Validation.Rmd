@@ -1,0 +1,883 @@
+---
+title: "Cross-Validation"
+author: "Yiming Chen"
+date: "2025-11-14"
+output: html_document
+---
+```{r}
+# load packages
+library(GDINA)
+library(mirt)
+library(mvtnorm)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+```
+
+# Split simualted item response data into k-folds for cross-validation
+Each entry is designed to have missing entries reserved for test set.
+
+## A function to randomly assign fold numbers for each row (individual)
+```{r}
+gen_data_for_row <- function(J,nfold){
+
+  # Number of complete repeats per fold
+  base_repeats <- floor(J / nfold)
+  remaining <- J %% nfold
+
+  # Create deterministic part
+  folds <- rep(1:nfold, times = base_repeats)
+
+  # Add randomly selected leftover folds
+  if (remaining > 0) {
+    folds <- c(folds, sample(1:nfold, size = remaining))
+  }
+
+  # Shuffle the fold assignments for this row
+  sample(folds, size = J)
+}
+```
+
+```{r}
+# example use case
+# each run time produces different results -> should set.seed()
+gen_data_for_row(30, 5)
+gen_data_for_row(30, 10)
+```
+
+## A function to split item response data into k-folds 
+```{r}
+split_data <- function(data,kfold=5,prop=NULL){
+  if(!is.matrix(data)){
+    data <- as.matrix(data)
+  }
+
+  N <- nrow(data)
+  J <- ncol(data)
+  ind <- matrix(NA,nrow = N,ncol = J)
+  for(i in 1:N){
+    ind[i,] <- gen_data_for_row(J,kfold)
+  }
+  newdata <- list()
+  for(n in 1:kfold){
+    kfold.loc <- which(ind==n)
+    temp <- data
+    temp[kfold.loc] <- NA
+    newdata[[n]] <- as.data.frame(temp)
+  }
+
+  ret <- list(cvdata=newdata,cvfold=ind,kfold=kfold,rawdata=data)
+}
+```
+
+# Cross Validated Congitive Diagnostic Model Fitting
+```{r}
+cv_fit_cdm_mp <- function(cvdata, Q, estimator="mp", ...){
+  N <- nrow(cvdata$rawdata)
+  J <- ncol(cvdata$rawdata)
+  K <- ncol(Q)
+  ind <- cvdata$cvfold
+
+  metrics <- fit <- obs_pred_p <- train_metrics <- train_obs_pred_p <- list()
+  for(n in 1:cvdata$kfold){
+    nfold.loc <- which(ind==n)
+    train.loc <- which(ind!=n)
+    nfold.length <- length(nfold.loc)
+    train.length <- length(train.loc)
+    
+    # Fit model
+    fit[[n]] <- GDINA(cvdata$cvdata[[n]], Q, ...)
+
+    # Validation sample metrics
+    person_parm <- personparm(fit[[n]], what = estimator)
+    item_parm <- coef(fit[[n]], what = "delta")
+    pred_p <- NULL
+    
+    for (j in 1:J) {
+      qj <- Q[j, ]
+      pred_p <- cbind(pred_p, plogis(cbind(1, person_parm[, which(qj == 1), drop = FALSE]) %*% item_parm[[j]]))
+    }
+    
+    pred_Y <- 1 * (pred_p > matrix(runif(N * J), nrow = N, ncol = J))
+    
+    p <- pred_p[nfold.loc]
+    pred.data <- pred_Y[nfold.loc]
+    
+    obs.data <- cvdata$rawdata[nfold.loc]
+    opp <- data.frame(obs.data, pred.data, p)
+    obs_pred_p[[n]] <- opp[complete.cases(opp), ]
+    metrics[[n]] <- classification_metrics(obs_pred_p[[n]]$obs.data, 
+                                           obs_pred_p[[n]]$pred.data, 
+                                           obs_pred_p[[n]]$p)
+    
+    # Training sample metrics
+    train_p <- pred_p[train.loc]
+    train_pred.data <- pred_Y[train.loc]
+    
+    train_obs.data <- cvdata$rawdata[train.loc]
+    train_opp <- data.frame(train_obs.data, train_pred.data, train_p)
+    train_obs_pred_p[[n]] <- train_opp[complete.cases(train_opp), ]
+    train_metrics[[n]] <- classification_metrics(train_obs_pred_p[[n]]$train_obs.data, 
+                                                 train_obs_pred_p[[n]]$train_pred.data, 
+                                                 train_obs_pred_p[[n]]$train_p)
+  }
+
+  output <- combine_metrics_table(metrics)
+  train_output <- combine_metrics_table(train_metrics)
+  
+  list(
+    metrics = output,
+    obs_pred_p = obs_pred_p,
+    metrics_kfold = metrics,
+    train_metrics = train_output,
+    train_obs_pred_p = train_obs_pred_p,
+    train_metrics_kfold = train_metrics
+  )
+}
+```
+
+```{r}
+cv_fit_cdm_attr <- function(cvdata,Q,estimator="MAP",...){
+  N <- nrow(cvdata$rawdata)
+  J <- ncol(cvdata$rawdata)
+  K <- ncol(Q)
+  ind <- cvdata$cvfold
+
+  metrics <- fit <- obs_pred_p <- train_metrics <- train_obs_pred_p <- list()
+  for(n in 1:cvdata$kfold){
+    nfold.loc <- which(ind==n)
+    train.loc <- which(ind!=n)
+    nfold.length <- length(nfold.loc)
+    train.length <- length(train.loc)
+
+    # Fit model
+    fit[[n]] <- GDINA(cvdata$cvdata[[n]], Q, ...)
+
+    # Validation sample metrics
+    profiles <- as.matrix(personparm(fit[[n]],what=estimator)[,1:K])
+    gr <- GDINA:::matchMatrix(as.matrix(attributepattern(K)),profiles)
+    cdmp <- t(fit[[n]]$LC.prob[,gr])
+    p <- cdmp[nfold.loc]
+    pred.data <- rbinom(nfold.length,1,p)
+    obs.data <- cvdata$rawdata[nfold.loc]
+    opp <- data.frame(obs.data,pred.data,p)
+    obs_pred_p[[n]] <- opp[complete.cases(opp),]
+    metrics[[n]] <- classification_metrics(obs_pred_p[[n]]$obs.data,
+                                           obs_pred_p[[n]]$pred.data,
+                                           obs_pred_p[[n]]$p)
+
+    # Training sample metrics
+    train_p <- cdmp[train.loc]
+    train_pred.data <- rbinom(train.length,1,train_p)
+    train_obs.data <- cvdata$rawdata[train.loc]
+    train_opp <- data.frame(train_obs.data,train_pred.data,train_p)
+    train_obs_pred_p[[n]] <- train_opp[complete.cases(train_opp),]
+    train_metrics[[n]] <- classification_metrics(train_obs_pred_p[[n]]$train_obs.data,
+                                                 train_obs_pred_p[[n]]$train_pred.data,
+                                                 train_obs_pred_p[[n]]$train_p)
+  }
+
+  output <- combine_metrics_table(metrics)
+  train_output <- combine_metrics_table(train_metrics)
+
+  list(
+    metrics = output,
+    obs_pred_p = obs_pred_p,
+    metrics_kfold = metrics,
+    train_metrics = train_output,
+    train_obs_pred_p = train_obs_pred_p,
+    train_metrics_kfold = train_metrics
+  )
+}
+```
+
+```{r}
+cv_fit_irt <- function(cvdata, model_specification, estimator="MAP",...){
+  N <- nrow(cvdata$rawdata)
+  J <- ncol(cvdata$rawdata)
+  ind <- cvdata$cvfold
+
+  metrics <- fit <- obs_pred_p <- train_metrics <- train_obs_pred_p <- list()
+  for(n in 1:cvdata$kfold){
+    p <- matrix(NA,N,J)
+    kfold.loc <- which(ind==n)
+    train.loc <- which(ind!=n)
+    kfold.length <- length(kfold.loc)
+    train.length <- length(train.loc)
+    
+    # Fit model
+    fit[[n]] <- mirt::mirt(cvdata$cvdata[[n]], ...)
+    
+    # Validation sample metrics
+    theta <- mirt::fscores(fit[[n]],method=estimator, QMC = TRUE)
+    for(j in 1:J){
+      p[,j] <- mirt::expected.item(mirt::extract.item(fit[[n]],item = j),theta) 
+    }
+    vp <- p[kfold.loc]
+    pred.data <- rbinom(kfold.length,1,vp)
+    obs.data <- cvdata$rawdata[kfold.loc]
+    opp <- data.frame(obs.data,pred.data,vp)
+    obs_pred_p[[n]] <- opp[complete.cases(opp),]
+    metrics[[n]] <- classification_metrics(obs_pred_p[[n]]$obs.data,
+                                           obs_pred_p[[n]]$pred.data,
+                                           obs_pred_p[[n]]$vp)
+    
+    # Training sample metrics
+    train_p <- p[train.loc]
+    train_pred.data <- rbinom(train.length,1,train_p)
+    train_obs.data <- cvdata$rawdata[train.loc]
+    train_opp <- data.frame(train_obs.data,train_pred.data,train_p)
+    train_obs_pred_p[[n]] <- train_opp[complete.cases(train_opp),]
+    train_metrics[[n]] <- classification_metrics(train_obs_pred_p[[n]]$train_obs.data,
+                                                 train_obs_pred_p[[n]]$train_pred.data,
+                                                 train_obs_pred_p[[n]]$train_p)
+  }
+
+  output <- combine_metrics_table(metrics)
+  train_output <- combine_metrics_table(train_metrics)
+  
+  list(
+    metrics = output,
+    obs_pred_p = obs_pred_p,
+    metrics_kfold = metrics,
+    train_metrics = train_output,
+    train_obs_pred_p = train_obs_pred_p,
+    train_metrics_kfold = train_metrics
+  )
+}
+```
+
+```{r}
+classification_metrics <- function(observed, predicted, p) {
+  # Ensure input vectors are numeric
+  observed <- as.numeric(as.character(observed))
+  predicted <- as.numeric(as.character(predicted))
+  p <- as.numeric(p)
+
+  # Confusion matrix components
+  tp <- sum(predicted == 1 & observed == 1)
+  tn <- sum(predicted == 0 & observed == 0)
+  fp <- sum(predicted == 1 & observed == 0)
+  fn <- sum(predicted == 0 & observed == 1)
+  cat("\nTP=", tp, " TN=", tn, " FP=", fp, "FN=", fn)
+  
+  # Basic metrics
+  accuracy <- mean(predicted == observed)
+  precision <- if ((tp + fp) == 0) NA else tp / (tp + fp) # PPV 
+  recall <- if ((tp + fn) == 0) NA else tp / (tp + fn) # sensitivity
+  specificity <- if ((tn + fp) == 0) NA else tn / (tn + fp)
+  f1_score <- if (is.na(precision) || is.na(recall) || (precision + recall == 0)) NA else 2 * precision * recall / (precision + recall)
+
+  # MCC
+  mcc_denom <- sqrt(
+    as.numeric((tp + fp)) *
+    as.numeric((tp + fn)) *
+    as.numeric((tn + fp)) *
+    as.numeric((tn + fn))
+  )
+  mcc <- if (mcc_denom == 0) NA else ((tp * tn) - (fp * fn)) / mcc_denom
+
+  # AUC - TPR (recall, Y-axis) vs. FPR (X-axis) Curve
+  auc_val <- tryCatch({
+    pROC::auc(pROC::roc(observed, p))
+  }, error = function(e) NA)
+
+  # PR AUC - Precision (Y-axis) - Recall (X-axis) Curve
+  pr_auc_val <- tryCatch({
+    fg <- p[observed == 1] # foreground
+    bg <- p[observed == 0] # background
+    # class0 belongs to the positive class -> observed == 1 -> fg
+    # class1 belongs to the negative class -> observed == 0 -> bg
+    pr <- PRROC::pr.curve(scores.class0 = fg, scores.class1 = bg)
+    pr$auc.integral
+  }, error = function(e) NA)
+
+  # Log Loss
+  log_loss <- {
+    eps <- 1e-15
+    p <- pmin(pmax(p, eps), 1 - eps)
+    -mean(observed * log(p) + (1 - observed) * log(1 - p))
+  }
+
+  # Confusion matrix
+  confusion_matrix <- matrix(c(tn, fp, fn, tp), nrow = 2, byrow = TRUE,
+                             dimnames = list("Predicted" = c("0", "1"),
+                                             "Actual" = c("0", "1")))
+
+  # Return all
+  return(list(
+    accuracy = accuracy,
+    precision = precision,
+    recall = recall,
+    specificity = specificity,
+    f1_score = f1_score,
+    mcc = mcc,
+    auc = auc_val,
+    pr_auc = pr_auc_val,
+    log_loss = log_loss,
+    confusion_matrix = confusion_matrix
+  ))
+}
+```
+
+```{r}
+combine_metrics_table <- function(metrics_list,digits=3) {
+  # Extract all scalar metric names (exclude confusion_matrix)
+  metric_names <- setdiff(names(metrics_list[[1]]), "confusion_matrix")
+
+  # Convert each list element to a one-row data frame
+  metrics_df <- do.call(rbind, lapply(metrics_list, function(m) {
+    as.data.frame(as.list(m[metric_names]))
+  }))
+
+  # Compute mean for each metric
+  average_row <- colMeans(metrics_df, na.rm = TRUE)
+
+  # Add the average as the final row
+  metrics_df <- rbind(metrics_df, Average = average_row)
+
+  metrics_df <- round(metrics_df, digits)
+  # Set row names: Fold_1, Fold_2, ..., Average
+  rownames(metrics_df) <- c(paste0("Fold_", seq_len(nrow(metrics_df) - 1)), "Average")
+
+  return(metrics_df)
+}
+```
+
+## Define a function to run cross validation
+```{r}
+Q_complex_3 <- matrix(c(
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,0,0, 0,1,0, 0,0,1,
+            1,1,0, 1,0,1, 0,1,1,
+            1,1,1, 1,1,1, 1,1,1,
+            1,1,1, 1,1,1, 1,1,1
+        ), ncol = 3, byrow = TRUE)
+
+# for complex structure: function to align model specification to Q-matrix
+to_model_string <- function(Q){
+  factors <- lapply(seq_len(ncol(Q)), function(f){
+    items <- which(Q[, f] == 1)
+    paste0("F", f, " = ", paste(items, collapse = ","))
+  })
+  cov <- paste0("COV = ", paste0("F", 1:ncol(Q), collapse = "*"))
+  paste(c(factors, cov), collapse = "\n")
+}
+
+# define Q-matrix in CDM / model_specification in IRT for different conditions 
+run_cv_fit <- function(cvobj, name) {
+  str <- if (grepl("Simple", name)) "Simple" else "Complex"
+  nd <- as.numeric(sub(".*dim([0-9]+)_.*", "\\1", name))
+  
+  if (str == "Simple") {
+    block_size <- 30 / nd
+    Q <- matrix(0, nrow = 30, ncol = nd)
+    for (i in 1:nd) {
+      start_index <- (i - 1) * block_size + 1
+      end_index <- i * block_size
+      Q[start_index:end_index, i] <- 1
+    }
+    factor_lines <- vapply(1:nd, function(i){
+      start_index <- (i - 1) * block_size + 1
+      end_index <- i * block_size
+      paste0("F", i, " = ", paste(start_index:end_index, collapse = ","))
+    }, character(1))
+    cov_line <- paste0("COV = ", paste0("F", 1:nd, collapse = "*"))
+    model_specification <- paste(c(factor_lines, cov_line), collapse = "\n")
+    
+  } else if (str == "Complex" & nd == 3) {
+    Q <- Q_complex_3
+    model_specification <- to_model_string(Q)
+    
+  } else if (str == "Complex" & nd == 5) {
+    Q <- sim30GDINA$simQ
+    model_specification <- to_model_string(Q)
+  }
+  
+  res_mp <- cv_fit_cdm_mp(cvobj, Q, 
+                          model = "LLM", verbose = 0
+                          #, mono.constraint = TRUE
+                          )
+  res_attribute <- cv_fit_cdm_attr(cvobj, Q, 
+                                   model = "LLM", verbose = 0
+                                   #, mono.constraint = TRUE
+                                   )
+  
+  # Warning: MHRM terminated after 2000 iterations. --> increase iterations to 5000
+  res_irt <- cv_fit_irt(cvobj, model_specification, 
+                        method = "MHRM", 
+                        technical = list(NCYCLES = 5000), 
+                        verbose = FALSE)
+  
+  return(list(
+    mp = res_mp, 
+    attribute = res_attribute, 
+    irt = res_irt)) # theta
+}
+```
+
+# Apply split_data function to get CDM cvdata
+```{r}
+# set seed to ensure reproducibility in splitting data 
+set.seed(101)
+
+# read CDM simulated data and save them into a list called cvdata_cdm
+files <- list.files("../CDM_sim/data", pattern = "^data_.*\\.csv$", full.names = TRUE)
+names(files) <- basename(files)    
+
+# cdm_data is a list of 120 data frames
+cdm_data <- lapply(files, read.csv)
+length(cdm_data)
+
+# generate cvdata using split_data function
+cvdata_cdm <- lapply(cdm_data, split_data, kfold = 10)
+
+# access data name for each data
+names(cvdata_cdm)[[1]]
+
+# access data name for multiple data
+names(cvdata_cdm)[1:10]
+```
+
+```{r}
+dir.create("../CDM_CV_results", showWarnings = FALSE)
+dir.create("../IRT_CV_results", showWarnings = FALSE)
+```
+
+# Apply run_cv_fit function to CDM data
+```{r, message=FALSE, eval=FALSE}
+set.seed(101)
+
+for (i in names(cvdata_cdm)) {
+  
+  cvobj <- cvdata_cdm[[i]]
+
+  res <- run_cv_fit(cvobj = cvobj, name = i)
+  
+  clean_i <- sub("^data_", "res_", i)
+  clean_i <- sub("\\.csv$", ".rds", clean_i)
+  
+  # save each condition separately
+  saveRDS(res, file = file.path("../CDM_CV_results", clean_i))
+  
+  cat("Saved:", clean_i, "\n")
+}
+```
+
+```{r}
+test <- readRDS("../CV_results_separate/res_Complex_cor0_dim3_rep1.rds")
+test$mp$metrics
+```
+
+```{r}
+pattern <- "res_Complex_cor0_dim3_rep"
+
+files <- list.files("../CDM_CV_results", pattern = pattern, full.names = TRUE)
+
+# Load all 10 replications
+res_list <- lapply(files, readRDS)
+```
+
+```{r}
+res_list[[1]]$mp$metrics$accuracy[11]
+```
+
+```{r}
+extract_metrics_condition <- function(structure, cor, dim,
+                                      folder = "../xxx") {
+  
+  # determine data source (CDM or IRT)
+  source_name <- sub("_CV_results$", "", basename(folder))
+  
+  # build pattern for the condition
+  pattern <- sprintf("^res_%s_%s_%s", structure, cor, dim)
+  
+  # get data for all 10 replications 
+  files <- list.files(folder, pattern = pattern, full.names = TRUE)
+  
+  if (length(files) == 0) {
+    stop("No files found for pattern: ", pattern)
+  }
+  
+  # read all replications
+  res_list <- lapply(files, readRDS)
+  
+  # extract replicate numbers from file names
+  reps <- as.numeric(str_extract(basename(files), "(?<=rep)\\d+"))
+  
+  methods <- c("mp", "attribute", "irt")
+  
+  # extract metrics for all reps × methods
+  metrics_df <- bind_rows(lapply(seq_along(res_list), function(i) {
+    res <- res_list[[i]]
+    replicate <- reps[i]
+    
+    bind_rows(lapply(methods, function(m) {
+      tibble(
+        data_source = source_name,
+        method = m,
+        structure = structure,
+        correlation = as.numeric(str_extract(cor, "\\d+(\\.\\d+)?")),
+        dim = as.numeric(str_extract(dim, "\\d+")),
+        replicate = replicate,
+        accuracy = res[[m]]$metrics$accuracy[11],
+        precision = res[[m]]$metrics$precision[11],
+        recall  = res[[m]]$metrics$recall[11],
+        specificity  = res[[m]]$metrics$specificity[11],
+        f1_score  = res[[m]]$metrics$f1_score[11],
+        mcc = res[[m]]$metrics$mcc[11],
+        auc  = res[[m]]$metrics$auc[11],
+        pr_auc = res[[m]]$metrics$pr_auc[11],
+        log_loss  = res[[m]]$metrics$log_loss[11]
+      )
+    }))
+  }))
+  
+  return(metrics_df)
+}
+```
+
+```{r}
+extract_metrics_condition(
+  structure = "Complex", 
+  cor = "cor0",
+  dim = "dim3",
+  folder = "../CDM_CV_results"
+)
+```
+
+# Apply split_data function to get IRT cvdata
+```{r}
+# set seed to ensure reproducibility in splitting data 
+set.seed(101)
+
+# read IRT simulated data and save them into a list called cvdata_irt
+files <- list.files("../IRT_sim/data", pattern = "^data_.*\\.csv$", full.names = TRUE)
+names(files) <- basename(files)    
+
+# irt_data is a list of 120 data frames
+irt_data <- lapply(files, read.csv)
+length(irt_data)
+
+# generate cvdata using split_data function
+cvdata_irt <- lapply(irt_data, split_data, kfold = 10)
+
+# access data name for each data
+names(cvdata_irt)[[1]]
+names(cvdata_irt)[1:10]
+```
+
+```{r, message=FALSE, eval=FALSE}
+set.seed(101)
+
+for (i in names(cvdata_irt)) {
+  
+  cvobj <- cvdata_irt[[i]]
+
+  res <- run_cv_fit(cvobj = cvobj, name = i)
+  
+  clean_i <- sub("^data_", "res_", i)
+  clean_i <- sub("\\.csv$", ".rds", clean_i)
+  
+  # save each condition separately
+  saveRDS(res, file = file.path("../IRT_CV_results", clean_i))
+  
+  cat("Saved:", clean_i, "\n")
+}
+```
+
+## Read in results
+```{r}
+structures <- c("Simple", "Complex")
+cors <- c("cor0", "cor0.3", "cor0.6")  
+dims <- c("dim3", "dim5")
+
+irt_result <- bind_rows(lapply(structures, function(S) {
+  bind_rows(lapply(cors, function(C) {
+    bind_rows(lapply(dims, function(D) {
+      extract_metrics_condition(S, C, D,
+                                "../IRT_CV_results")
+    }))
+  }))
+}))
+```
+
+```{r}
+# readRDS("../CV_10fold/irt_data_res_simple_dim5.rds")$data_Simple_cor0_dim5_rep3.csv$mp$metrics
+# readRDS("../CV_10fold/irt_data_res_simple_dim5.rds")$data_Simple_cor0_dim5_rep3.csv$attr$metrics
+# readRDS("../CV_10fold/irt_data_res_simple_dim5.rds")$data_Simple_cor0_dim5_rep3.csv$irt$metrics
+```
+
+```{r}
+# readRDS("../CV_10fold/irt_data_res_complex_dim3.rds")$data_Complex_cor0.3_dim3_rep5.csv$mp$metrics
+# readRDS("../CV_10fold/irt_data_res_complex_dim3.rds")$data_Complex_cor0.3_dim3_rep5.csv$attr$metrics
+# readRDS("../CV_10fold/irt_data_res_complex_dim3.rds")$data_Complex_cor0.3_dim3_rep5.csv$irt$metrics
+```
+
+```{r}
+cdm_result <- bind_rows(lapply(structures, function(S) {
+  bind_rows(lapply(cors, function(C) {
+    bind_rows(lapply(dims, function(D) {
+      extract_metrics_condition(S, C, D,
+                                "../CDM_CV_results")
+    }))
+  }))
+}))
+```
+
+
+```{r}
+# readRDS("../CV_10fold/cdm_data_res_simple_dim5_10folds.rds")$data_Simple_cor0.3_dim5_rep10.csv$mp$metrics
+# readRDS("../CV_10fold/cdm_data_res_simple_dim5_10folds.rds")$data_Simple_cor0.3_dim5_rep10.csv$attr$metrics
+# readRDS("../CV_10fold/cdm_data_res_simple_dim5_10folds.rds")$data_Simple_cor0.3_dim5_rep10.csv$irt$metrics
+```
+
+```{r}
+# (cdm_result <- cdm_result %>%
+#   mutate(method = factor(method, levels = c("mp", "attribute", "irt"))) %>% 
+#   group_by(data_source, method, structure, correlation, dim) %>%
+#   summarize(
+#     mean_accuracy = mean(accuracy),
+#     mean_precision = mean(precision),
+#     mean_recall = mean(recall),
+#     mean_specificity = mean(specificity),
+#     mean_f1_score = mean(f1_score),
+#     mean_mcc = mean(mcc),
+#     mean_auc = mean(auc),
+#     mean_pr_auc = mean(pr_auc),
+#     mean_log_loss = mean(log_loss),
+#     .groups = "drop"
+#     ) %>%
+#   arrange(structure, correlation, dim, method))
+```
+
+```{r}
+# (irt_result <- irt_result %>%
+#   mutate(method = factor(method, levels = c("mp", "attribute", "irt"))) %>% 
+#   group_by(data_source, method, structure, correlation, dim) %>%
+#   summarize(
+#     mean_accuracy = mean(accuracy),
+#     mean_precision = mean(precision),
+#     mean_recall = mean(recall),
+#     mean_specificity = mean(specificity),
+#     mean_f1_score = mean(f1_score),
+#     mean_mcc = mean(mcc),
+#     mean_auc = mean(auc),
+#     mean_pr_auc = mean(pr_auc),
+#     mean_log_loss = mean(log_loss),
+#     .groups = "drop"
+#     ) %>%
+#   arrange(structure, correlation, dim, method))
+```
+
+```{r}
+cv_result <- rbind(cdm_result, irt_result)
+cv_result
+```
+```{r}
+irt_result
+```
+
+## Create Difference Plots
+### MP - Theta
+```{r}
+mp_theta <- cv_result %>%
+  filter(method == "mp"| method == "irt") %>%
+  select(data_source, replicate, method, structure, correlation, dim, accuracy, mcc, log_loss) %>%
+  group_by(data_source, structure, correlation, dim) %>%
+  pivot_wider(names_from = method, values_from = c(accuracy, mcc, log_loss)) %>%
+  mutate(
+  accuracy_diff = accuracy_mp - accuracy_irt,
+  mcc_diff = mcc_mp - mcc_irt,
+  log_loss_diff = log_loss_mp - log_loss_irt) %>%
+ungroup()
+```
+
+```{r}
+mp_theta %>%
+  filter(data_source == "CDM" & structure == "Complex")
+
+mp_theta %>%
+  filter(data_source == "IRT" & structure == "Complex")
+```
+
+```{r}
+mp_theta_acc_hlines <- expand.grid(
+  structure   = c("Simple", "Complex"),
+  dim         = c(3, 5),
+  correlation = c(0, 0.3, 0.6)
+) %>%
+  mutate(
+    hline = c(
+      0.04, 0.03, # simple dim3 cor0, complex dim3 cor 0
+      0.05, 0.06, # simple dim5 cor0, complex dim5 cor 0
+      0.04, 0.02, # simple dim3 cor0.3, complex dim3 cor0.3
+      0.03, 0.04, # simple dim5 cor0.3, complex dim5 cor0.3
+      0.03, 0.02, # simple dim3 cor0.6, complex dim3 cor0.6
+      0.01, 0.01 # simple dim5 cor0.6, complex dim5 cor0.6
+    )
+  )
+
+mp_theta_logloss_hlines <- expand.grid(
+  structure   = c("Simple", "Complex"),
+  dim         = c(3, 5),
+  correlation = c(0, 0.3, 0.6)
+) %>%
+  mutate(
+    hline = c(
+      -0.05, -0.04,
+      -0.05, -0.06,
+      -0.04, -0.03,
+      -0.03, -0.03,
+      -0.01, 0.00,
+      -0.01, -0.02
+    )
+  )
+```
+
+```{r, fig.width=10, fig.height=6, dpi=300}
+ggplot(mp_theta, aes(x = replicate, y = accuracy_diff)) +
+  geom_point(shape = 21, size = 2, aes(fill = data_source)) +
+  geom_hline(data = mp_theta_acc_hlines, aes(yintercept = hline),
+             color = "black", linetype = "dashed", linewidth = 0.6) +
+  scale_fill_manual(
+    name = "Accuracy Difference",
+    values = c("CDM" = "darkolivegreen1", "IRT" = "deeppink2")
+  ) +
+  scale_x_continuous(name = "Replication", breaks = 1:10) +
+  ylab("Accuracy Difference") +
+  ggtitle("Accuracy Difference by MP - Theta") +
+  theme_bw() +
+  facet_grid(structure + dim ~ correlation) 
+
+ggplot(mp_theta, aes(x = replicate, y = log_loss_diff)) +
+  geom_point(shape = 21, size = 2, aes(fill = data_source)) +
+  geom_hline(data = mp_theta_logloss_hlines, aes(yintercept = hline),
+             color = "black", linetype = "dashed", linewidth = 0.6) +
+  scale_fill_manual(
+    name = "Log Loss Difference",
+    values = c("CDM" = "darkolivegreen1", "IRT" = "deeppink2")
+  ) +
+  scale_x_continuous(name = "Replication", breaks = 1:10) +
+  ylab("Log Loss Difference") +
+  ggtitle("Log Loss Difference by MP - Theta") +
+  theme_bw() +
+  facet_grid(structure + dim ~ correlation) 
+```
+
+### Attribute - Theta
+```{r}
+attr_theta <- cv_result %>%
+  filter(method == "attribute"| method == "irt") %>%
+  select(data_source, replicate, method, structure, correlation, dim, accuracy, mcc, log_loss) %>%
+  group_by(data_source, structure, correlation, dim) %>%
+  pivot_wider(names_from = method, values_from = c(accuracy, mcc, log_loss)) %>%
+  mutate(
+  accuracy_diff = accuracy_attribute - accuracy_irt,
+  mcc_diff = mcc_attribute - mcc_irt,
+  log_loss_diff = log_loss_attribute - log_loss_irt) %>%
+ungroup()
+```
+
+```{r, fig.width=10, fig.height=6, dpi=300}
+ggplot(attr_theta, aes(x = replicate, y = accuracy_diff)) +
+  geom_point(shape = 21, size = 2, aes(fill = data_source)) +
+  geom_hline(yintercept = 0,
+             color = "black", linetype = "dashed", linewidth = 0.8) +
+  scale_fill_manual(
+    name = "Accuracy Difference",
+    values = c("CDM" = "darkolivegreen1", "IRT" = "deeppink2")
+  ) +
+  scale_x_continuous(name = "Replication", breaks = 1:10) +
+  ylab("Accuracy Difference") +
+  ggtitle("Accuracy Difference by Attribute - Theta") +
+  theme_bw() +
+  facet_grid(structure + dim ~ correlation) 
+
+ggplot(attr_theta, aes(x = replicate, y = log_loss_diff)) +
+  geom_point(shape = 21, size = 2, aes(fill = data_source)) +
+  geom_hline(yintercept = 0,
+             color = "black", linetype = "dashed", linewidth = 0.8) +
+  scale_fill_manual(
+    name = "Log Loss Difference",
+    values = c("CDM" = "darkolivegreen1", "IRT" = "deeppink2")
+  ) +
+  scale_x_continuous(name = "Replication", breaks = 1:10) +
+  ylab("Log Loss Difference") +
+  ggtitle("Log Loss Difference by Attribute - Theta") +
+  theme_bw() +
+  facet_grid(structure + dim ~ correlation) 
+```
+
+### Attribute - MP
+```{r}
+attr_mp <- cv_result %>%
+  filter(method == "mp"| method == "attribute") %>%
+  select(data_source, replicate, method, structure, correlation, dim, accuracy, mcc, log_loss) %>%
+  group_by(data_source, structure, correlation, dim) %>%
+  pivot_wider(names_from = method, values_from = c(accuracy, mcc, log_loss)) %>%
+  mutate(
+    accuracy_diff = accuracy_attribute - accuracy_mp,
+    mcc_diff = mcc_attribute - mcc_mp,
+    log_loss_diff = log_loss_attribute - log_loss_mp) %>%
+  ungroup()
+```
+
+```{r, fig.width=10, fig.height=6, dpi=300}
+ggplot(attr_mp, aes(x = replicate, y = accuracy_diff)) +
+  geom_point(shape = 21, size = 2, aes(fill = data_source)) +
+  geom_hline(yintercept = 0,
+             color = "black", linetype = "dashed", linewidth = 0.8) +
+  scale_fill_manual(
+    name = "Accuracy Difference",
+    values = c("CDM" = "darkolivegreen1", "IRT" = "deeppink2")
+  ) +
+  scale_x_continuous(name = "Replication", breaks = 1:10) +
+  ylab("Accuracy Difference") +
+  ggtitle("Accuracy Difference by Attribute - MP") +
+  theme_bw() +
+  facet_grid(structure + dim ~ correlation)
+
+ggplot(attr_mp, aes(x = replicate, y = log_loss_diff)) +
+  geom_point(shape = 21, size = 2, aes(fill = data_source)) +
+  geom_hline(yintercept = 0,
+             color = "black", linetype = "dashed", linewidth = 0.8) +
+  scale_fill_manual(
+    name = "Log Loss Difference",
+    values = c("CDM" = "darkolivegreen1", "IRT" = "deeppink2")
+  ) +
+  scale_x_continuous(name = "Replication", breaks = 1:10) +
+  ylab("Log Loss Difference") +
+  ggtitle("Log Loss Difference by Attribute - MP") +
+  theme_bw() +
+  facet_grid(structure + dim ~ correlation) 
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
