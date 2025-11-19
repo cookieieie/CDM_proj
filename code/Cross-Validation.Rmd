@@ -4,6 +4,14 @@ author: "Yiming Chen"
 date: "2025-11-14"
 output: html_document
 ---
+Create directory to save results
+```{r}
+dir.create("../CDM_CV_results", showWarnings = FALSE)
+dir.create("../IRT_CV_results", showWarnings = FALSE)
+dir.create("../CDM_CV_results_5fold", showWarnings = FALSE)
+dir.create("../IRT_CV_results_5fold", showWarnings = FALSE)
+```
+
 ```{r}
 # load packages
 library(GDINA)
@@ -207,7 +215,7 @@ cv_fit_irt <- function(cvdata, model_specification, estimator="MAP",...){
     train.length <- length(train.loc)
     
     # Fit model
-    fit[[n]] <- mirt::mirt(cvdata$cvdata[[n]], ...)
+    fit[[n]] <- mirt::mirt(cvdata$cvdata[[n]], model_specification, ...)
     
     # Validation sample metrics
     theta <- mirt::fscores(fit[[n]],method=estimator, QMC = TRUE)
@@ -422,75 +430,11 @@ run_cv_fit <- function(cvobj, name) {
 }
 ```
 
-# Apply split_data function to get CDM cvdata
-```{r}
-# set seed to ensure reproducibility in splitting data 
-set.seed(101)
-
-# read CDM simulated data and save them into a list called cvdata_cdm
-files <- list.files("../CDM_sim/data", pattern = "^data_.*\\.csv$", full.names = TRUE)
-names(files) <- basename(files)    
-
-# cdm_data is a list of 120 data frames
-cdm_data <- lapply(files, read.csv)
-length(cdm_data)
-
-# generate cvdata using split_data function
-cvdata_cdm <- lapply(cdm_data, split_data, kfold = 10)
-
-# access data name for each data
-names(cvdata_cdm)[[1]]
-
-# access data name for multiple data
-names(cvdata_cdm)[1:10]
-```
-
-```{r}
-dir.create("../CDM_CV_results", showWarnings = FALSE)
-dir.create("../IRT_CV_results", showWarnings = FALSE)
-```
-
-# Apply run_cv_fit function to CDM data
-```{r, message=FALSE, eval=FALSE}
-set.seed(101)
-
-for (i in names(cvdata_cdm)) {
-  
-  cvobj <- cvdata_cdm[[i]]
-
-  res <- run_cv_fit(cvobj = cvobj, name = i)
-  
-  clean_i <- sub("^data_", "res_", i)
-  clean_i <- sub("\\.csv$", ".rds", clean_i)
-  
-  # save each condition separately
-  saveRDS(res, file = file.path("../CDM_CV_results", clean_i))
-  
-  cat("Saved:", clean_i, "\n")
-}
-```
-
-```{r}
-test <- readRDS("../CV_results_separate/res_Complex_cor0_dim3_rep1.rds")
-test$mp$metrics
-```
-
-```{r}
-pattern <- "res_Complex_cor0_dim3_rep"
-
-files <- list.files("../CDM_CV_results", pattern = pattern, full.names = TRUE)
-
-# Load all 10 replications
-res_list <- lapply(files, readRDS)
-```
-
-```{r}
-res_list[[1]]$mp$metrics$accuracy[11]
-```
-
+## Define a function to extract CV results for both CDM & IRT
 ```{r}
 extract_metrics_condition <- function(structure, cor, dim,
-                                      folder = "../xxx") {
+                                      folder = "../xxx",
+                                      metric_index = 11) {
   
   # determine data source (CDM or IRT)
   source_name <- sub("_CV_results$", "", basename(folder))
@@ -526,21 +470,84 @@ extract_metrics_condition <- function(structure, cor, dim,
         correlation = as.numeric(str_extract(cor, "\\d+(\\.\\d+)?")),
         dim = as.numeric(str_extract(dim, "\\d+")),
         replicate = replicate,
-        accuracy = res[[m]]$metrics$accuracy[11],
-        precision = res[[m]]$metrics$precision[11],
-        recall  = res[[m]]$metrics$recall[11],
-        specificity  = res[[m]]$metrics$specificity[11],
-        f1_score  = res[[m]]$metrics$f1_score[11],
-        mcc = res[[m]]$metrics$mcc[11],
-        auc  = res[[m]]$metrics$auc[11],
-        pr_auc = res[[m]]$metrics$pr_auc[11],
-        log_loss  = res[[m]]$metrics$log_loss[11]
+        accuracy = res[[m]]$metrics$accuracy[metric_index],
+        precision = res[[m]]$metrics$precision[metric_index],
+        recall  = res[[m]]$metrics$recall[metric_index],
+        specificity  = res[[m]]$metrics$specificity[metric_index],
+        f1_score  = res[[m]]$metrics$f1_score[metric_index],
+        mcc = res[[m]]$metrics$mcc[metric_index],
+        auc  = res[[m]]$metrics$auc[metric_index],
+        pr_auc = res[[m]]$metrics$pr_auc[metric_index],
+        log_loss  = res[[m]]$metrics$log_loss[metric_index]
       )
     }))
   }))
   
   return(metrics_df)
 }
+```
+
+# 10-fold CV
+## Apply split_data function to get CDM cvdata
+```{r}
+# set seed to ensure reproducibility in splitting data 
+set.seed(101)
+
+# read CDM simulated data and save them into a list called cvdata_cdm
+files <- list.files("../CDM_sim/data", pattern = "^data_.*\\.csv$", full.names = TRUE)
+names(files) <- basename(files)    
+
+# cdm_data is a list of 120 data frames
+cdm_data <- lapply(files, read.csv)
+length(cdm_data)
+
+# generate cvdata using split_data function
+cvdata_cdm <- lapply(cdm_data, split_data, kfold = 10)
+
+# access data name for each data
+names(cvdata_cdm)[[1]]
+
+# access data name for multiple data
+names(cvdata_cdm)[1:10]
+```
+
+```{r, message=FALSE, eval=FALSE}
+set.seed(101)
+
+for (i in names(cvdata_cdm)) {
+  
+  cvobj <- cvdata_cdm[[i]]
+
+  res <- run_cv_fit(cvobj = cvobj, name = i)
+  
+  clean_i <- sub("^data_", "res_", i)
+  clean_i <- sub("\\.csv$", ".rds", clean_i)
+  
+  # save each condition separately
+  saveRDS(res, file = file.path("../CDM_CV_results", clean_i))
+  
+  cat("Saved:", clean_i, "\n")
+}
+```
+
+```{r}
+test <- readRDS("../CDM_CV_results/res_Complex_cor0_dim3_rep1.rds")
+test$mp$metrics
+test$attribute$metrics
+test$irt$metrics
+```
+
+```{r}
+pattern <- "res_Complex_cor0_dim3_rep"
+
+files <- list.files("../CDM_CV_results", pattern = pattern, full.names = TRUE)
+
+# Load all 10 replications
+res_list <- lapply(files, readRDS)
+```
+
+```{r}
+res_list[[1]]$mp$metrics$accuracy[11]
 ```
 
 ```{r}
@@ -552,7 +559,7 @@ extract_metrics_condition(
 )
 ```
 
-# Apply split_data function to get IRT cvdata
+## Apply split_data function to get IRT cvdata
 ```{r}
 # set seed to ensure reproducibility in splitting data 
 set.seed(101)
@@ -598,29 +605,6 @@ structures <- c("Simple", "Complex")
 cors <- c("cor0", "cor0.3", "cor0.6")  
 dims <- c("dim3", "dim5")
 
-irt_result <- bind_rows(lapply(structures, function(S) {
-  bind_rows(lapply(cors, function(C) {
-    bind_rows(lapply(dims, function(D) {
-      extract_metrics_condition(S, C, D,
-                                "../IRT_CV_results")
-    }))
-  }))
-}))
-```
-
-```{r}
-# readRDS("../CV_10fold/irt_data_res_simple_dim5.rds")$data_Simple_cor0_dim5_rep3.csv$mp$metrics
-# readRDS("../CV_10fold/irt_data_res_simple_dim5.rds")$data_Simple_cor0_dim5_rep3.csv$attr$metrics
-# readRDS("../CV_10fold/irt_data_res_simple_dim5.rds")$data_Simple_cor0_dim5_rep3.csv$irt$metrics
-```
-
-```{r}
-# readRDS("../CV_10fold/irt_data_res_complex_dim3.rds")$data_Complex_cor0.3_dim3_rep5.csv$mp$metrics
-# readRDS("../CV_10fold/irt_data_res_complex_dim3.rds")$data_Complex_cor0.3_dim3_rep5.csv$attr$metrics
-# readRDS("../CV_10fold/irt_data_res_complex_dim3.rds")$data_Complex_cor0.3_dim3_rep5.csv$irt$metrics
-```
-
-```{r}
 cdm_result <- bind_rows(lapply(structures, function(S) {
   bind_rows(lapply(cors, function(C) {
     bind_rows(lapply(dims, function(D) {
@@ -629,13 +613,29 @@ cdm_result <- bind_rows(lapply(structures, function(S) {
     }))
   }))
 }))
+
+# irt_result <- bind_rows(lapply(structures, function(S) {
+#   bind_rows(lapply(cors, function(C) {
+#     bind_rows(lapply(dims, function(D) {
+#       extract_metrics_condition(S, C, D,
+#                                 "../IRT_CV_results")
+#     }))
+#   }))
+# }))
 ```
 
+```{r}
+cdm_result %>%
+  mutate(method = ifelse(method == "irt", "theta", method))
+```
 
 ```{r}
-# readRDS("../CV_10fold/cdm_data_res_simple_dim5_10folds.rds")$data_Simple_cor0.3_dim5_rep10.csv$mp$metrics
-# readRDS("../CV_10fold/cdm_data_res_simple_dim5_10folds.rds")$data_Simple_cor0.3_dim5_rep10.csv$attr$metrics
-# readRDS("../CV_10fold/cdm_data_res_simple_dim5_10folds.rds")$data_Simple_cor0.3_dim5_rep10.csv$irt$metrics
+cv_result <- rbind(cdm_result, irt_result)
+cv_result
+```
+
+```{r}
+irt_result
 ```
 
 ```{r}
@@ -674,14 +674,6 @@ cdm_result <- bind_rows(lapply(structures, function(S) {
 #     .groups = "drop"
 #     ) %>%
 #   arrange(structure, correlation, dim, method))
-```
-
-```{r}
-cv_result <- rbind(cdm_result, irt_result)
-cv_result
-```
-```{r}
-irt_result
 ```
 
 ## Create Difference Plots
@@ -859,12 +851,106 @@ ggplot(attr_mp, aes(x = replicate, y = log_loss_diff)) +
   facet_grid(structure + dim ~ correlation) 
 ```
 
+# 5-fold CV
+```{r}
+# set seed to ensure reproducibility in splitting data 
+set.seed(101)
 
+# read CDM simulated data and save them into a list called cvdata_cdm
+files <- list.files("../CDM_sim/data", pattern = "^data_.*\\.csv$", full.names = TRUE)
+names(files) <- basename(files)    
 
+# cdm_data is a list of 120 data frames
+cdm_data <- lapply(files, read.csv)
+length(cdm_data)
 
+# generate cvdata using split_data function
+cvdata_cdm <- lapply(cdm_data, split_data, kfold = 5)
+```
 
+```{r}
+# set seed to ensure reproducibility in splitting data 
+set.seed(101)
 
+# read IRT simulated data and save them into a list called cvdata_irt
+files <- list.files("../IRT_sim/data", pattern = "^data_.*\\.csv$", full.names = TRUE)
+names(files) <- basename(files)    
 
+# irt_data is a list of 120 data frames
+irt_data <- lapply(files, read.csv)
+length(irt_data)
+
+# generate cvdata using split_data function
+cvdata_irt <- lapply(irt_data, split_data, kfold = 5)
+```
+
+```{r, message=FALSE, eval=FALSE}
+set.seed(101)
+
+for (i in names(cvdata_cdm)) {
+  
+  cvobj <- cvdata_cdm[[i]]
+
+  res <- run_cv_fit(cvobj = cvobj, name = i)
+  
+  clean_i <- sub("^data_", "res_", i)
+  clean_i <- sub("\\.csv$", ".rds", clean_i)
+  
+  # save each condition separately
+  saveRDS(res, file = file.path("../CDM_CV_results_5fold", clean_i))
+  
+  cat("Saved:", clean_i, "\n")
+}
+```
+
+```{r, message=FALSE, eval=FALSE}
+set.seed(101)
+
+for (i in names(cvdata_irt)) {
+  
+  cvobj <- cvdata_irt[[i]]
+
+  res <- run_cv_fit(cvobj = cvobj, name = i)
+  
+  clean_i <- sub("^data_", "res_", i)
+  clean_i <- sub("\\.csv$", ".rds", clean_i)
+  
+  # save each condition separately
+  saveRDS(res, file = file.path("../IRT_CV_results_5fold", clean_i))
+  
+  cat("Saved:", clean_i, "\n")
+}
+```
+
+```{r}
+cdm_result_5fold <- bind_rows(lapply(structures, function(S) {
+  bind_rows(lapply(cors, function(C) {
+    bind_rows(lapply(dims, function(D) {
+      extract_metrics_condition(S, C, D,
+                                "../CDM_CV_results_5fold",
+                                metric_index = 6)
+    }))
+  }))
+}))
+
+irt_result_5fold <- bind_rows(lapply(structures, function(S) {
+  bind_rows(lapply(cors, function(C) {
+    bind_rows(lapply(dims, function(D) {
+      extract_metrics_condition(S, C, D,
+                                "../IRT_CV_results_5fold",
+                                metric_index = 6)
+    }))
+  }))
+}))
+```
+
+```{r}
+(cdm_result_5fold <- cdm_result_5fold %>% 
+  mutate(data_source = "CDM"))
+
+(irt_result_5fold <- irt_result_5fold %>% 
+  mutate(data_source = "IRT"))
+```
 
 
 
