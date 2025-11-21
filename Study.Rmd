@@ -1,0 +1,301 @@
+---
+title: "Study"
+author: "Yiming Chen"
+date: "2025-11-21"
+output: html_document
+---
+```{r}
+library(GDINA)
+library(mirt)
+library(mvtnorm)
+```
+
+# CDM Simulation  
+## LLM (Linear Logistict Model)
+Q = 30 * 5 (30 items, 5 attributes)
+guessing/slip randomly generated between 0.1 and 0.3, fixed for all items
+correlation between dimensions/attributes is 0.6
+```{r}
+set.seed(101)
+N <- 2000
+Q <- sim30GDINA$simQ
+K <- ncol(Q)
+
+gs <- matrix(runif(1, 0.1, 0.3), nrow(Q), 2)
+
+# K = 5; 1/6, 2/6, 3/6 ...
+cutoffs <- qnorm(c(1:K)/(K+1))
+m <- rep(0, K)
+vcov <- matrix(0.6, K, K)
+diag(vcov) <- 1
+
+# simulate multivariate response data under LLM model
+simmv <- simGDINA(N, Q,
+                  gs.parm = gs, 
+                  att.dist = "mvnorm", 
+                  model = "LLM",
+                  mvnorm.parm = list(mean = m, sigma = vcov, cutoffs = cutoffs))
+
+#dat <- extract(simmv, what = "dat")
+dat <- simmv$dat
+head(dat)
+dim(dat)
+```
+
+```{r}
+# true lambda parameters for 30 items
+head(simmv$delta.parm)
+```
+
+```{r}
+# true attribute profiles
+attr <- simmv$attribute
+head(attr)
+dim(attr)
+```
+
+```{r}
+# fit LLM using GDINA
+est <- GDINA(dat, Q, model = "LLM")
+
+# extract individual mastery probabilities
+mp <- personparm(est, what = "mp")
+
+# extract estimated attribute profile alpha - EAP method
+est_attr <- personparm(est, what = "EAP") # EAP by default
+
+head(mp)
+head(est_attr)
+dim(mp)
+dim(est_attr)
+```
+
+```{r}
+# extract attribute estimates with MAP -> can change method to MAP and check if there are multimodes
+head(personparm(est, what = "MAP"))
+table(personparm(est, what = "MAP")$multimodes)
+```
+
+```{r}
+# item parameter estimates (lambdas under the LLM model)
+# if model is GDINA, it would be delta
+# note: what = "delta" is a unified GDINA argument 
+head(coef(est, what = "delta"))
+length(coef(est, what = "delta"))
+```
+
+```{r}
+# all possible attribute combinations for 5 attributes
+# in total 2^5 = 32 combinations
+attributepattern(5)
+nrow(attributepattern(5))
+```
+
+```{r}
+Q
+```
+
+```{r}
+# there are 32 total LC.prob (item success probabilities)
+# the probability of answering each item correctly for 32 different profile combinations
+# LC.prob is an I * 32 matrix (items * latent classes)
+
+# latent class 2 (10000) only mastered A1, so it only has high probabilities when an item requires A1
+est$LC.prob[,2]
+cat("-----------------------------------\n")
+
+# probabilities for latent class 32
+est$LC.prob[,32]
+
+#est$LC.prob[,33] --> error because only 32 classes exist 
+```
+
+```{r}
+# convert est_attr to a 2000 * 5 matrix (N persons * K attributes)
+profiles <- as.matrix(est_attr[, 1:5]) # or simply as.matrix(est_attr)
+
+# identify for each person which of the 32 latent classes they correspond to
+# returns a vector of length N (2000 * 1), values 1-32
+gr <- GDINA:::matchMatrix(as.matrix(attributepattern(5)), profiles)
+
+# extract item response probabilities for each person
+# for each person (row), use their class gr[i] to pick the LC probabilities
+# return N * I matrix (2000 * 30)
+cdmp <- t(est$LC.prob[,gr]) # LC.prob means latent class probabilities
+
+head(profiles)
+dim(profiles)
+
+head(gr)
+dim(gr)
+
+head(cdmp)
+dim(cdmp)
+```
+
+```{r}
+# Example
+# item 1 lambda parameters: d0 = -1.5437; d1 = 3.1465
+# item 1 requires one attribute: A1 (from Q-matrix)
+
+# calculate eta when a person masters A1 (1)
+(eta11 <- -1.5437 + 3.1465 * 1)
+# convert eta to probability using the logistic function
+(p11 <- exp(eta11) / (1+exp(eta11))) # --> match the probability from cdmp
+# convert probability back to eta
+log(p11/(1-p11))
+
+# calculate eta when a person doesn't master A1 (0)
+(eta10 <- -1.5437 + 3.1465 * 0)
+# convert eta to probability using the logistic function
+(p10 <- exp(eta10) / (1+exp(eta10))) # --> match the probability from cdmp
+# convert probability back to eta
+log(p10/(1-p10))
+```
+
+## GDINA
+```{r}
+est1 <- GDINA(dat, Q, model = "GDINA")
+
+# extract individual mastery probabilities
+mp1 <- personparm(est1, what = "mp")
+
+# extract estimated attribute profile alpha "EAP"
+est_attr1 <- personparm(est1)
+
+head(mp1)
+head(est_attr1)
+```
+
+```{r}
+# different from the previous LLM output, GDINA has interaction effects
+coef(est1, what = "delta")
+```
+
+# IRT Simulation
+## same simulation conditions as CDM
+discrimination matrix follows Q-matrix: 30 * 5 (30 items, 5 attributes)
+  - simulated using runif() ranging from 0.4 to 1.8
+  - only simulated for the required dimension in Q-matrix
+correlation between dimensions/attributes is 0.6
+difficulty parameter follows normal distribution
+```{r}
+set.seed(101)
+
+# simulate theta
+r1 <- matrix(0.6, 5, 5)
+diag(r1) <- 1
+theta <- rmvnorm(2000, sigma=r1)
+head(theta)
+
+# simulate discrimination matrix
+a <- matrix(NA, nrow=30, ncol=5)
+a[sim30GDINA$simQ == 1] <- runif(sum(sim30GDINA$simQ == 1), 0.4, 1.8)
+head(a)
+
+# a[1:10, 1] <- runif(10, 0.4, 1.8)
+# a[11:20, 2] <- runif(10, 0.4, 1.8)
+# a[21:30, 3] <- runif(10, 0.4, 1.8)
+
+
+# difficulty parameter
+d <- matrix(rnorm(nrow(a)))
+
+# simulate response data
+data <- simdata(a = a, d = d, itemtype = '2PL', Theta = theta)
+head(data)
+```
+
+```{r}
+# function to align model specification in mirt to Q-matrix
+to_model_string <- function(Q){
+  factors <- lapply(seq_len(ncol(Q)), function(f){
+    items <- which(Q[, f] == 1)
+    paste0("F", f, " = ", paste(items, collapse = ","))
+  })
+  cov <- paste0("COV = ", paste0("F", 1:ncol(Q), collapse = "*"))
+  paste(c(factors, cov), collapse = "\n")
+}
+
+cat(model_specification <- to_model_string(Q))
+```
+
+```{r}
+# fit to mirt with MHRM method
+mirt_model <- mirt(data, model_specification, method = "MHRM")
+coef(mirt_model)
+```
+
+
+```{r}
+est_theta <- fscores(mirt_model, method ="MAP", QMC = T)
+head(est_theta)
+
+# head(fscores(mirt_model, method ="EAP"))
+# head(fscores(mirt_model, method ="MAP"))
+# head(fscores(mirt_model, method ="EAP", QMC = T))
+# head(fscores(mirt_model, method ="MAP", QMC = T))
+```
+
+```{r}
+p1 <- expected.item(extract.item(mirt_model, item = 1), est_theta)
+
+# probability of the first 10 individuals getting item 1 correctly
+p1[1:10]
+```
+
+# Fit CDM data to mirt
+```{r}
+# convert column names to Item x
+dat_mirt <- dat
+colnames(dat_mirt) <- paste0("Item", 1:ncol(dat))
+
+mirt_cdmdat <- mirt(dat_mirt, model_specification, method = "MHRM")
+```
+
+```{r}
+theta_cdmdat <- fscores(mirt_cdmdat, method ="MAP", QMC = T)
+```
+
+```{r}
+eps <- 1e-5
+mp_clip <- pmin(pmax(mp, eps), 1 - eps)
+
+pearson_cor <- vector()
+spearman_cor <- vector()
+
+for (i in 1:ncol(mp)) {
+  pearson_cor[[i]] <- cor(theta_cdmdat[,i], qnorm(mp_clip[,i]))
+  spearman_cor[[i]] <- cor(theta_cdmdat[,i], qnorm(mp_clip[,i]), method = "spearman")
+}
+
+pearson_cor
+spearman_cor
+```
+
+# Fit IRT data to GDINA
+```{r}
+est_irtdata <- GDINA(data, Q, model = "LLM")
+mp_irtdata <- personparm(est_irtdata, what = "mp")
+```
+
+```{r}
+eps <- 1e-5
+mp_clip <- pmin(pmax(mp_irtdata, eps), 1 - eps)
+
+pearson_cor <- vector()
+spearman_cor <- vector()
+
+for (i in 1:ncol(mp_irtdata)) {
+  pearson_cor[[i]] <- cor(est_theta[,i], qnorm(mp_clip[,i]))
+  spearman_cor[[i]] <- cor(est_theta[,i], qnorm(mp_clip[,i]), method = "spearman")
+}
+
+pearson_cor
+spearman_cor
+```
+
+
+
+
+
